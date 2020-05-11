@@ -1,0 +1,3 @@
+/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/CMakeFiles/rebuild_cache.dir
+/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/CMakeFiles/edit_cache.dir
+/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/CMakeFiles/proj3.dir

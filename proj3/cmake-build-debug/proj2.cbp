@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6"/>
+	<Project>
+		<Option title="proj2"/>
+		<Option makefile_is_custom="1"/>
+		<Option compiler="gcc"/>
+		<Option virtualFolders="CMake Files\;"/>
+		<Build>
+			<Target title="all">
+				<Option working_dir="/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 all"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="rebuild_cache">
+				<Option working_dir="/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 rebuild_cache"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="edit_cache">
+				<Option working_dir="/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug"/>
+				<Option type="4"/>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 edit_cache"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="proj3">
+				<Option output="/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/proj3" prefix_auto="0" extension_auto="0"/>
+				<Option working_dir="/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug"/>
+				<Option object_output="./"/>
+				<Option type="1"/>
+				<Option compiler="gcc"/>
+				<Compiler>
+					<Add directory="/home/failury/Desktop/ecs-150-project-3/proj3/."/>
+					<Add directory="/home/failury/Desktop/ecs-150-project-3/proj3/apps"/>
+					<Add directory="/home/failury/Desktop/ecs-150-project-3/proj3/src"/>
+					<Add directory="/usr/include/c++/7"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/c++/7"/>
+					<Add directory="/usr/include/c++/7/backward"/>
+					<Add directory="/usr/lib/gcc/x86_64-linux-gnu/7/include"/>
+					<Add directory="/usr/local/include"/>
+					<Add directory="/usr/lib/gcc/x86_64-linux-gnu/7/include-fixed"/>
+					<Add directory="/usr/include/x86_64-linux-gnu"/>
+					<Add directory="/usr/include"/>
+				</Compiler>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 proj3"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+			<Target title="proj3/fast">
+				<Option output="/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/proj3" prefix_auto="0" extension_auto="0"/>
+				<Option working_dir="/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug"/>
+				<Option object_output="./"/>
+				<Option type="1"/>
+				<Option compiler="gcc"/>
+				<Compiler>
+					<Add directory="/home/failury/Desktop/ecs-150-project-3/proj3/."/>
+					<Add directory="/home/failury/Desktop/ecs-150-project-3/proj3/apps"/>
+					<Add directory="/home/failury/Desktop/ecs-150-project-3/proj3/src"/>
+					<Add directory="/usr/include/c++/7"/>
+					<Add directory="/usr/include/x86_64-linux-gnu/c++/7"/>
+					<Add directory="/usr/include/c++/7/backward"/>
+					<Add directory="/usr/lib/gcc/x86_64-linux-gnu/7/include"/>
+					<Add directory="/usr/local/include"/>
+					<Add directory="/usr/lib/gcc/x86_64-linux-gnu/7/include-fixed"/>
+					<Add directory="/usr/include/x86_64-linux-gnu"/>
+					<Add directory="/usr/include"/>
+				</Compiler>
+				<MakeCommands>
+					<Build command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 proj3/fast"/>
+					<CompileFile command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 &quot;$file&quot;"/>
+					<Clean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+					<DistClean command="/usr/bin/make -j8 -f &quot;/home/failury/Desktop/ecs-150-project-3/proj3/cmake-build-debug/Makefile&quot;  VERBOSE=1 clean"/>
+				</MakeCommands>
+			</Target>
+		</Build>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/Makefile">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/apps/file.c">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/apps/hello.c">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/apps/preempt.c">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/apps/sleep.c">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/apps/thread.c">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/src/Machine.cpp">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/src/Machine.h">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/src/VirtualMachine.cpp">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/src/VirtualMachine.h">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/src/VirtualMachineUtils.c">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/src/main.c">
+			<Option target="proj3"/>
+		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs-150-project-3/proj3/CMakeLists.txt">
+			<Option virtualFolder="CMake Files\"/>
+		</Unit>
+	</Project>
+</CodeBlocks_project_file>
