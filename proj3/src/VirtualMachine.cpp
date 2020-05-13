@@ -37,13 +37,21 @@ struct TCB {
     void *Param;
     void *StackAddress;
     int FileData;
+    bool HaveMutex;
 };
 std::vector<TCB> ThreadList;
 std::vector<TCB> Ready;
 std::vector<TCB> Sleep;
+struct Mutex {
+    TVMMutexID ID;
+    TVMThreadID TID;
+    bool Locked;
+    std::vector<TCB> WaitingList;
+};
+std::vector<Mutex> MutexList;
 void debug() {
     write(STDOUT_FILENO, "Thread List ", 12);
-    for (int i = 0; i < (int)ThreadList.size(); i++) {
+    for (int i = 0; i < (int) ThreadList.size(); i++) {
 //        char tmp[3]={0x0};
 //        sprintf(tmp,"%d: ", int(ThreadList[i].ID));
 //        write(STDOUT_FILENO,tmp,sizeof(tmp));
@@ -53,7 +61,7 @@ void debug() {
     }
     write(STDOUT_FILENO, "||", 2);
     write(STDOUT_FILENO, "Ready List ", 11);
-    for (int i = 0; i < (int)Ready.size(); i++) {
+    for (int i = 0; i < (int) Ready.size(); i++) {
         char tmp[4] = {0x0};
         sprintf(tmp, "%d: ", int(Ready[i].ID));
         write(STDOUT_FILENO, tmp, sizeof(tmp));
@@ -63,7 +71,7 @@ void debug() {
     }
     write(STDOUT_FILENO, "||", 2);
     write(STDOUT_FILENO, "Sleep List ", 11);
-    for (int i = 0; i < (int)Sleep.size(); i++) {
+    for (int i = 0; i < (int) Sleep.size(); i++) {
         char tmp[4] = {0x0};
         sprintf(tmp, "%d: ", int(Sleep[i].ID));
         write(STDOUT_FILENO, tmp, sizeof(tmp));
@@ -73,31 +81,30 @@ void debug() {
     }
     write(STDOUT_FILENO, "\n", 1);
 }
-void SORT() {//Bubble sort algorithm https://www.geeksforgeeks.org/bubble-sort/
+void SORT(std::vector<TCB> &Input) {//Bubble sort algorithm https://www.geeksforgeeks.org/bubble-sort/
     int i, j;
-    int n = Ready.size();
+    int n = Input.size();
     for (i = 0; i < n - 1; i++)
         for (j = 0; j < n - i - 1; j++)
-            if (Ready[j].Priority < Ready[j + 1].Priority)
-                std::swap(Ready[j], Ready[j + 1]);
+            if (Input[j].Priority < Input[j + 1].Priority)
+                std::swap(Input[j], Input[j + 1]);
 }
 void Callback(void *CallData) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
     tickCount++;
     for (int i = 0; i < (int) Sleep.size(); i++) {
-        Sleep[i].SleepTime--;
-        if (Sleep[i].SleepTime < 0 && ThreadList[Sleep[i].ID].State != VM_THREAD_STATE_DEAD) {
-            TCB AwakeThread = Sleep[i];//push to ready list if the thread is done with sleeping
-            Sleep.erase(Sleep.begin() + i);
-            AwakeThread.State = VM_THREAD_STATE_READY;
-            ThreadList[AwakeThread.ID].State = VM_THREAD_STATE_READY;
-            Ready.push_back(AwakeThread);
+        if (Sleep[i].SleepTime != -1000000) {
+            Sleep[i].SleepTime--;
+            if (Sleep[i].SleepTime < 0 && ThreadList[Sleep[i].ID].State != VM_THREAD_STATE_DEAD) {
+                TCB AwakeThread = Sleep[i];//push to ready list if the thread is done with sleeping
+                Sleep.erase(Sleep.begin() + i);
+                AwakeThread.State = VM_THREAD_STATE_READY;
+                ThreadList[AwakeThread.ID].State = VM_THREAD_STATE_READY;
+                Ready.push_back(AwakeThread);
 
+            }
         }
-//        char tmp[12]={0x0};
-//        sprintf(tmp,"%11d", int(Sleep[i].SleepTime));
-//        write(STDOUT_FILENO,tmp,sizeof(tmp));
     }
     Scheduler(VM_THREAD_STATE_READY);
 //    if (!Ready.empty() && ThreadList[RunningThreadID].Priority == ThreadList[Ready.front().ID].Priority){
@@ -112,7 +119,7 @@ void Scheduler(TVMThreadState NextState) {
     int TempID = RunningThreadID;
     NextThread = ThreadList[1];
     if (!Ready.empty()) {
-        SORT();//sort the ready list by priority
+        SORT(Ready);//sort the ready list by priority
         NextThread = Ready.front();
         Ready.erase(Ready.begin());
         if (ThreadList[NextThread.ID].State == VM_THREAD_STATE_READY) {
@@ -160,8 +167,9 @@ void skeleton(void *param) {
     ThreadList[ID].Entry(ThreadList[ID].Param);
     VMThreadTerminate(ThreadList[ID].ID);
 }
-TVMStatus VMStart(int tickms, int argc, char *argv[]) {
-    MachineInitialize();
+TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, int argc, char *argv[]) {
+//    void * share_memory =
+    MachineInitialize(sharedsize);
     Tickms = tickms;
     MachineRequestAlarm(tickms * 1000, Callback, NULL);
     TVMMainEntry entry = VMLoadModule(argv[0]);
@@ -221,6 +229,7 @@ VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThre
         thread.SleepTime = 0;
         thread.State = VM_THREAD_STATE_DEAD;
         thread.StackAddress = new uint8_t[memsize];
+        thread.HaveMutex = false;
         thread.Context = SMachineContext();
         ThreadList.push_back(thread);
         MachineResumeSignals(&signal);
@@ -235,7 +244,7 @@ TVMStatus VMThreadDelete(TVMThreadID thread) {
         ThreadList.erase(ThreadList.begin() + thread);
         MachineResumeSignals(&signal);
         return VM_STATUS_SUCCESS;
-    } else if (thread > ThreadList.size() || thread < 0) {
+    } else if (thread >= ThreadList.size() || thread < 0) {
         return VM_STATUS_ERROR_INVALID_ID;
     }
     return VM_STATUS_ERROR_INVALID_STATE;
@@ -269,13 +278,33 @@ TVMStatus VMThreadTerminate(TVMThreadID thread) {
     } else if (ThreadList[thread].State == VM_THREAD_STATE_DEAD) {
         return VM_STATUS_ERROR_INVALID_STATE;
     }
-//    write(STDOUT_FILENO,"ter",3);
-//    char tmp[12]={0x0};
-//    sprintf(tmp,"%11d", int(thread));
-//    write(STDOUT_FILENO,tmp,sizeof(tmp));
-//    write(STDOUT_FILENO,"\n",1);
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
+    for (int i = 0; i < MutexList.size(); i++) {
+        if (MutexList[i].Locked == true && MutexList[i].TID == thread) {
+            MutexList[i].Locked = false;
+            TCB ReadyThread;
+            if (!MutexList[i].WaitingList.empty()) {
+                SORT(MutexList[i].WaitingList);
+                ReadyThread = MutexList[i].WaitingList.front();
+                MutexList[i].WaitingList.erase(MutexList[i].WaitingList.begin());
+                if (ThreadList[i].HaveMutex) {
+                    MutexList[i].TID = ReadyThread.ID;
+                    MutexList[i].Locked = true;
+                    if (ThreadList[ReadyThread.ID].Priority > ThreadList[RunningThreadID].Priority) {
+                        ThreadList[RunningThreadID].State = VM_THREAD_STATE_READY;
+                        Ready.push_back(ThreadList[RunningThreadID]);
+                        Scheduler(VM_THREAD_STATE_READY);
+                    } else {
+                        ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
+                        Ready.push_back(ThreadList[ReadyThread.ID]);
+                    }
+
+                }
+
+            }
+        }
+    }
     for (auto &i : ThreadList) {
         if (i.ID == thread) {
             i.State = VM_THREAD_STATE_DEAD;
@@ -384,6 +413,110 @@ TVMStatus VMFileSeek(int filedescriptor, int offset, int whence, int *newoffset)
     *newoffset = offset;
     MachineFileSeek(filedescriptor, offset, whence, FileCallback, &ThreadList[RunningThreadID]);
     Scheduler(VM_THREAD_STATE_WAITING);
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMMutexCreate(TVMMutexIDRef mutexref) {
+    if (mutexref == NULL) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    Mutex M;
+    M.ID = MutexList.size();
+    M.Locked = false;
+    *mutexref = M.ID;
+    MutexList.push_back(M);
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMMutexDelete(TVMMutexID mutex) {
+    if (mutex >= MutexList.size() || mutex < 0) {
+        return VM_STATUS_ERROR_INVALID_ID;
+    }
+    if (MutexList[mutex].Locked) {
+        return VM_STATUS_ERROR_INVALID_STATE;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    MutexList.erase(MutexList.begin() + mutex);
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMMutexQuery(TVMMutexID mutex, TVMThreadIDRef ownerref) {
+    if (ownerref == NULL) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    if (mutex >= MutexList.size() || mutex < 0) {
+        return VM_STATUS_ERROR_INVALID_ID;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    if (!MutexList[mutex].Locked) {
+        *ownerref = VM_STATUS_ERROR_INVALID_ID;
+    }
+    *ownerref = MutexList[mutex].TID;
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
+    if (mutex >= MutexList.size() || mutex < 0) {
+        return VM_STATUS_ERROR_INVALID_ID;
+    }
+    if (timeout == VM_TIMEOUT_IMMEDIATE && MutexList[mutex].Locked == true) {
+        return VM_STATUS_FAILURE;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    if (MutexList[mutex].Locked && MutexList[mutex].TID == RunningThreadID) {
+        MachineResumeSignals(&signal);
+        return VM_STATUS_SUCCESS;
+    } else if (!MutexList[mutex].Locked) {
+        MutexList[mutex].Locked = true;
+        MutexList[mutex].TID = RunningThreadID;
+        MachineResumeSignals(&signal);
+        return VM_STATUS_SUCCESS;
+    }
+    TCB WaitingThread = ThreadList[RunningThreadID];
+    WaitingThread.HaveMutex = true;
+    ThreadList[RunningThreadID] = WaitingThread;
+    MutexList[mutex].WaitingList.push_back(WaitingThread);
+    if (timeout == VM_TIMEOUT_INFINITE) {
+        VMThreadSleep(-1000000);//special value for infinite waiting.
+    } else {
+        VMThreadSleep(timeout);
+    }
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMMutexRelease(TVMMutexID mutex) {
+    if (mutex >= MutexList.size() || mutex < 0) {
+        return VM_STATUS_ERROR_INVALID_ID;
+    }
+    if (MutexList[mutex].TID == RunningThreadID) {
+        return VM_STATUS_ERROR_INVALID_STATE;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    MutexList[mutex].Locked = false;
+    TCB ReadyThread;
+    if (!MutexList[mutex].WaitingList.empty()) {
+        SORT(MutexList[mutex].WaitingList);
+        ReadyThread = MutexList[mutex].WaitingList.front();
+        MutexList[mutex].WaitingList.erase(MutexList[mutex].WaitingList.begin());
+        if (ThreadList[ReadyThread.ID].HaveMutex) {
+            MutexList[mutex].Locked = true;
+            MutexList[mutex].TID = ReadyThread.ID;
+            if (ThreadList[ReadyThread.ID].Priority > ThreadList[RunningThreadID].Priority) {
+                ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
+                Ready.push_back(ThreadList[ReadyThread.ID]);
+                Scheduler(VM_THREAD_STATE_READY);
+            } else {
+                ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
+                Ready.push_back(ThreadList[ReadyThread.ID]);
+            }
+        }
+    }
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }

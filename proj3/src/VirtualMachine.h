@@ -58,7 +58,8 @@ TVMStatus VMMutexDelete(TVMMutexID mutex);
 TVMStatus VMMutexQuery(TVMMutexID mutex, TVMThreadIDRef ownerref);
 TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout);     
 TVMStatus VMMutexRelease(TVMMutexID mutex);
-
+void VMUnloadModule(void);
+TVMMainEntry VMLoadModule(const char *module);
 #define VMPrint(format, ...)        VMFilePrint ( 1,  format, ##__VA_ARGS__)
 #define VMPrintError(format, ...)   VMFilePrint ( 2,  format, ##__VA_ARGS__)
 
