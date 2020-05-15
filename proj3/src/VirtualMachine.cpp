@@ -50,34 +50,49 @@ struct Mutex {
 };
 std::vector<Mutex> MutexList;
 void debug() {
-    write(STDOUT_FILENO, "Thread List ", 12);
-    for (int i = 0; i < (int) ThreadList.size(); i++) {
-//        char tmp[3]={0x0};
-//        sprintf(tmp,"%d: ", int(ThreadList[i].ID));
-//        write(STDOUT_FILENO,tmp,sizeof(tmp));
-        char amp[10] = {0x0};
-        sprintf(amp, "State: %d ", int(ThreadList[i].State));
-        write(STDOUT_FILENO, amp, sizeof(amp));
-    }
-    write(STDOUT_FILENO, "||", 2);
-    write(STDOUT_FILENO, "Ready List ", 11);
-    for (int i = 0; i < (int) Ready.size(); i++) {
+//    write(STDOUT_FILENO, "Thread List ", 12);
+//    for (int i = 0; i < (int) ThreadList.size(); i++) {
+//        char amp[10] = {0x0};
+//        sprintf(amp, "State: %d ", int(ThreadList[i].State));
+//        write(STDOUT_FILENO, amp, sizeof(amp));
+//    }
+//    write(STDOUT_FILENO, "||", 2);
+//    write(STDOUT_FILENO, "Ready List ", 11);
+//    for (int i = 0; i < (int) Ready.size(); i++) {
+//        char tmp[4] = {0x0};
+//        sprintf(tmp, "%d: ", int(Ready[i].ID));
+//        write(STDOUT_FILENO, tmp, sizeof(tmp));
+//        char amp[10] = {0x0};
+//        sprintf(amp, "State: %d ", int(Ready[i].State));
+//        write(STDOUT_FILENO, amp, sizeof(amp));
+//    }
+//    write(STDOUT_FILENO, "||", 2);
+//    write(STDOUT_FILENO, "Sleep List ", 11);
+//    for (int i = 0; i < (int) Sleep.size(); i++) {
+//        char tmp[4] = {0x0};
+//        sprintf(tmp, "%d: ", int(Sleep[i].ID));
+//        write(STDOUT_FILENO, tmp, sizeof(tmp));
+//        char amp[10] = {0x0};
+//        sprintf(amp, "State: %d ", int(Sleep[i].State));
+//        write(STDOUT_FILENO, amp, sizeof(amp));
+//    }
+    for (int i = 0; i < (int)MutexList.size();i++){
         char tmp[4] = {0x0};
-        sprintf(tmp, "%d: ", int(Ready[i].ID));
+        sprintf(tmp, "%d: ", int(MutexList[i].ID));
         write(STDOUT_FILENO, tmp, sizeof(tmp));
         char amp[10] = {0x0};
-        sprintf(amp, "State: %d ", int(Ready[i].State));
+        int a;
+        if ( MutexList[i].Locked){
+            a = 1;
+        } else{
+            a = 0;
+        }
+        sprintf(amp, "Lock: %d ", int(a));
         write(STDOUT_FILENO, amp, sizeof(amp));
-    }
-    write(STDOUT_FILENO, "||", 2);
-    write(STDOUT_FILENO, "Sleep List ", 11);
-    for (int i = 0; i < (int) Sleep.size(); i++) {
-        char tmp[4] = {0x0};
-        sprintf(tmp, "%d: ", int(Sleep[i].ID));
-        write(STDOUT_FILENO, tmp, sizeof(tmp));
-        char amp[10] = {0x0};
-        sprintf(amp, "State: %d ", int(Sleep[i].State));
-        write(STDOUT_FILENO, amp, sizeof(amp));
+        char bmp[11] = {0x0};
+        sprintf(bmp, "Owner: %d ", int(MutexList[i].TID));
+        write(STDOUT_FILENO, bmp, sizeof(bmp));
+        write(STDOUT_FILENO, "\n", 1);
     }
     write(STDOUT_FILENO, "\n", 1);
 }
@@ -151,7 +166,7 @@ void Scheduler(TVMThreadState NextState) {
 //    sprintf(tmp,"%11d", int(NextThread.ID));
 //    write(STDOUT_FILENO,tmp,sizeof(tmp));
 //    write(STDOUT_FILENO,"\n",1);
-    // debug();
+     //debug();
     MachineContextSwitch(&ThreadList[TempID].Context, &ThreadList[NextThread.ID].Context);
     MachineResumeSignals(&signal);
 }
@@ -168,8 +183,8 @@ void skeleton(void *param) {
     VMThreadTerminate(ThreadList[ID].ID);
 }
 TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, int argc, char *argv[]) {
-//    void * share_memory =
-    MachineInitialize(sharedsize);
+
+    MachineInitialize();
     Tickms = tickms;
     MachineRequestAlarm(tickms * 1000, Callback, NULL);
     TVMMainEntry entry = VMLoadModule(argv[0]);
@@ -280,29 +295,9 @@ TVMStatus VMThreadTerminate(TVMThreadID thread) {
     }
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    for (int i = 0; i < MutexList.size(); i++) {
+    for (int i = 0; i < (int)MutexList.size(); i++) {
         if (MutexList[i].Locked == true && MutexList[i].TID == thread) {
-            MutexList[i].Locked = false;
-            TCB ReadyThread;
-            if (!MutexList[i].WaitingList.empty()) {
-                SORT(MutexList[i].WaitingList);
-                ReadyThread = MutexList[i].WaitingList.front();
-                MutexList[i].WaitingList.erase(MutexList[i].WaitingList.begin());
-                if (ThreadList[i].HaveMutex) {
-                    MutexList[i].TID = ReadyThread.ID;
-                    MutexList[i].Locked = true;
-                    if (ThreadList[ReadyThread.ID].Priority > ThreadList[RunningThreadID].Priority) {
-                        ThreadList[RunningThreadID].State = VM_THREAD_STATE_READY;
-                        Ready.push_back(ThreadList[RunningThreadID]);
-                        Scheduler(VM_THREAD_STATE_READY);
-                    } else {
-                        ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
-                        Ready.push_back(ThreadList[ReadyThread.ID]);
-                    }
-
-                }
-
-            }
+            VMMutexRelease(MutexList[i].ID);
         }
     }
     for (auto &i : ThreadList) {
@@ -427,6 +422,7 @@ TVMStatus VMMutexCreate(TVMMutexIDRef mutexref) {
     M.Locked = false;
     *mutexref = M.ID;
     MutexList.push_back(M);
+
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
@@ -460,10 +456,12 @@ TVMStatus VMMutexQuery(TVMMutexID mutex, TVMThreadIDRef ownerref) {
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
+//   std::cout << "Thread: " << RunningThreadID << " acquire" << mutex << std::endl;
+//    std::cout << std::endl;
     if (mutex >= MutexList.size() || mutex < 0) {
         return VM_STATUS_ERROR_INVALID_ID;
     }
-    if (timeout == VM_TIMEOUT_IMMEDIATE && MutexList[mutex].Locked == true) {
+    if (timeout == VM_TIMEOUT_IMMEDIATE && MutexList[mutex].Locked) {
         return VM_STATUS_FAILURE;
     }
     TMachineSignalState signal;
@@ -481,23 +479,32 @@ TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
     WaitingThread.HaveMutex = true;
     ThreadList[RunningThreadID] = WaitingThread;
     MutexList[mutex].WaitingList.push_back(WaitingThread);
-    if (timeout == VM_TIMEOUT_INFINITE) {
-        VMThreadSleep(-1000000);//special value for infinite waiting.
-    } else {
-        VMThreadSleep(timeout);
-    }
+    VMThreadSleep(timeout);
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMMutexRelease(TVMMutexID mutex) {
+//    if( RunningThreadID == 0){
+//        std::cout << "Mainthread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
+//    }
+
     if (mutex >= MutexList.size() || mutex < 0) {
+        if( RunningThreadID == 0){
+            std::cout << "Mainthread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
+        }
         return VM_STATUS_ERROR_INVALID_ID;
     }
-    if (MutexList[mutex].TID == RunningThreadID) {
+    if (MutexList[mutex].TID != RunningThreadID) {
+        if( RunningThreadID == 0){
+            std::cout << "Mainthread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
+        }
         return VM_STATUS_ERROR_INVALID_STATE;
     }
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
+    if( RunningThreadID == 0){
+        std::cout << "Mainthread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
+    }
     MutexList[mutex].Locked = false;
     TCB ReadyThread;
     if (!MutexList[mutex].WaitingList.empty()) {

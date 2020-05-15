@@ -28,7 +28,6 @@ void VMThreadLow(void *param){
 
 void VMMain(int argc, char *argv[]){
     TVMThreadID VMThreadIDHigh, VMThreadIDMedium, VMThreadIDLow;
-    
     VMPrint("VMMain creating threads.\n");
     VMThreadCreate(VMThreadLow, NULL, 0x100000, VM_THREAD_PRIORITY_LOW, &VMThreadIDLow);
     VMThreadCreate(VMThreadMedium, NULL, 0x100000, VM_THREAD_PRIORITY_NORMAL, &VMThreadIDMedium);
