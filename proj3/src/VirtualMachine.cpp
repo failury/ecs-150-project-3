@@ -381,7 +381,7 @@ TVMStatus VMFileRead(int filedescriptor, void *data, int *length) {
             Scheduler(VM_THREAD_STATE_WAITING);
             AllocateMemory(&SharePtr);
         }
-        MachineFileRead(filedescriptor, data, *length, FileCallback, &ThreadList[RunningThreadID]);
+        MachineFileRead(filedescriptor, SharePtr, ReadSize, FileCallback, &ThreadList[RunningThreadID]);
         Scheduler(VM_THREAD_STATE_WAITING);
         std::memcpy(Dataptr,SharePtr,ReadSize);
         DeallocateMemory(SharePtr);
@@ -425,6 +425,7 @@ TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
         *length += ThreadList[RunningThreadID].FileData;
         Dataptr += ReadSize;
     }
+    //std::cout << (char*)SharePtr <<" "<<ReadSize << std::endl;
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
@@ -519,22 +520,15 @@ TVMStatus VMMutexRelease(TVMMutexID mutex) {
 //    }
 
     if (mutex >= MutexList.size() || mutex < 0) {
-        if( RunningThreadID == 0){
-            std::cout << "Mainthread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
-        }
         return VM_STATUS_ERROR_INVALID_ID;
     }
     if (MutexList[mutex].TID != RunningThreadID) {
-        if( RunningThreadID == 0){
-            std::cout << "Mainthread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
-        }
+
         return VM_STATUS_ERROR_INVALID_STATE;
     }
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    if( RunningThreadID == 0){
-        std::cout << "Mainthread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
-    }
+
     MutexList[mutex].Locked = false;
     TCB ReadyThread;
     if (!MutexList[mutex].WaitingList.empty()) {
