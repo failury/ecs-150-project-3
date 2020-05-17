@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <bits/stdc++.h>
 
+
+
 extern "C" {
 #define PL() std::cout << "@ line" <<__LINE__
 typedef void (*TVMMainEntry)(int, char *[]);
@@ -25,6 +27,11 @@ void Scheduler(TVMThreadState NextState);
 volatile int Tickms = 0;
 volatile int tickCount = 0;
 volatile TVMThreadID RunningThreadID;
+int NumOfChunks;
+void CreateShareMemory(void *pointer, int Size);
+bool AllocateMemory(void **pointer);
+void DeallocateMemory(void *pointer);
+
 struct TCB {
     //define tcb model
     TVMThreadID ID;
@@ -38,6 +45,7 @@ struct TCB {
     void *StackAddress;
     int FileData;
     bool HaveMutex;
+    int AllocatedSize;
 };
 std::vector<TCB> ThreadList;
 std::vector<TCB> Ready;
@@ -49,33 +57,13 @@ struct Mutex {
     std::vector<TCB> WaitingList;
 };
 std::vector<Mutex> MutexList;
+struct Chunk { //from OH
+    void* Base;
+    bool Occupied;
+};
+std::vector<Chunk> MemoryChunks;
+std::vector<TCB> MemoryWaitingList;
 void debug() {
-//    write(STDOUT_FILENO, "Thread List ", 12);
-//    for (int i = 0; i < (int) ThreadList.size(); i++) {
-//        char amp[10] = {0x0};
-//        sprintf(amp, "State: %d ", int(ThreadList[i].State));
-//        write(STDOUT_FILENO, amp, sizeof(amp));
-//    }
-//    write(STDOUT_FILENO, "||", 2);
-//    write(STDOUT_FILENO, "Ready List ", 11);
-//    for (int i = 0; i < (int) Ready.size(); i++) {
-//        char tmp[4] = {0x0};
-//        sprintf(tmp, "%d: ", int(Ready[i].ID));
-//        write(STDOUT_FILENO, tmp, sizeof(tmp));
-//        char amp[10] = {0x0};
-//        sprintf(amp, "State: %d ", int(Ready[i].State));
-//        write(STDOUT_FILENO, amp, sizeof(amp));
-//    }
-//    write(STDOUT_FILENO, "||", 2);
-//    write(STDOUT_FILENO, "Sleep List ", 11);
-//    for (int i = 0; i < (int) Sleep.size(); i++) {
-//        char tmp[4] = {0x0};
-//        sprintf(tmp, "%d: ", int(Sleep[i].ID));
-//        write(STDOUT_FILENO, tmp, sizeof(tmp));
-//        char amp[10] = {0x0};
-//        sprintf(amp, "State: %d ", int(Sleep[i].State));
-//        write(STDOUT_FILENO, amp, sizeof(amp));
-//    }
     for (int i = 0; i < (int)MutexList.size();i++){
         char tmp[4] = {0x0};
         sprintf(tmp, "%d: ", int(MutexList[i].ID));
@@ -159,13 +147,6 @@ void Scheduler(TVMThreadState NextState) {
     }
     ThreadList[NextThread.ID].State = VM_THREAD_STATE_RUNNING;
     RunningThreadID = NextThread.ID;
-//    char tmp[12]={0x0};
-//    sprintf(tmp,"%11d", int(TempID));
-//    write(STDOUT_FILENO,tmp,sizeof(tmp));
-//    write(STDOUT_FILENO,"Switchto",8);
-//    sprintf(tmp,"%11d", int(NextThread.ID));
-//    write(STDOUT_FILENO,tmp,sizeof(tmp));
-//    write(STDOUT_FILENO,"\n",1);
      //debug();
     MachineContextSwitch(&ThreadList[TempID].Context, &ThreadList[NextThread.ID].Context);
     MachineResumeSignals(&signal);
@@ -173,7 +154,6 @@ void Scheduler(TVMThreadState NextState) {
 void IdleThread(void *param) {
     MachineEnableSignals();
     while (1) {
-
     }
 }
 void skeleton(void *param) {
@@ -184,7 +164,8 @@ void skeleton(void *param) {
 }
 TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, int argc, char *argv[]) {
 
-    MachineInitialize();
+    void* Sharememory = MachineInitialize(sharedsize);
+    CreateShareMemory(Sharememory, sharedsize);
     Tickms = tickms;
     MachineRequestAlarm(tickms * 1000, Callback, NULL);
     TVMMainEntry entry = VMLoadModule(argv[0]);
@@ -380,9 +361,33 @@ TVMStatus VMFileRead(int filedescriptor, void *data, int *length) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
-    MachineFileRead(filedescriptor, data, *length, FileCallback, &ThreadList[RunningThreadID]);
-    Scheduler(VM_THREAD_STATE_WAITING);
-    *length = ThreadList[RunningThreadID].FileData;
+    int Byteleft = *length;
+    *length = 0;
+    int ReadSize = 0;
+    char* Dataptr = (char*) data;
+    void * SharePtr = nullptr;
+    while (Byteleft > 0){
+        if ( Byteleft >= 512){
+            ReadSize = 512;
+            Byteleft -= 512;
+        } else if ( Byteleft < 512){
+            ReadSize = Byteleft;
+            Byteleft = 0;
+        }
+        if(!AllocateMemory(&SharePtr)){
+            //if no memory available, schedule and wait for there is memory available
+            ThreadList[RunningThreadID].AllocatedSize = ReadSize;
+            MemoryWaitingList.push_back(ThreadList[RunningThreadID]);
+            Scheduler(VM_THREAD_STATE_WAITING);
+            AllocateMemory(&SharePtr);
+        }
+        MachineFileRead(filedescriptor, data, *length, FileCallback, &ThreadList[RunningThreadID]);
+        Scheduler(VM_THREAD_STATE_WAITING);
+        std::memcpy(Dataptr,SharePtr,ReadSize);
+        DeallocateMemory(SharePtr);
+        *length += ThreadList[RunningThreadID].FileData;
+        Dataptr += ReadSize;
+    }
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
@@ -393,8 +398,33 @@ TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
-    MachineFileWrite(filedescriptor, data, *length, FileCallback, &ThreadList[RunningThreadID]);
-    Scheduler(VM_THREAD_STATE_WAITING);
+    int Byteleft = *length;
+    *length = 0;
+    int ReadSize = 0;
+    char* Dataptr = (char*) data;
+    void * SharePtr = nullptr;
+    while (Byteleft > 0){
+        if ( Byteleft >= 512){
+            ReadSize = 512;
+            Byteleft -= 512;
+        } else if ( Byteleft < 512){
+            ReadSize = Byteleft;
+            Byteleft = 0;
+        }
+        if(!AllocateMemory(&SharePtr)){
+            //if no memory available, schedule and wait for there is memory available
+            ThreadList[RunningThreadID].AllocatedSize = ReadSize;
+            MemoryWaitingList.push_back(ThreadList[RunningThreadID]);
+            Scheduler(VM_THREAD_STATE_WAITING);
+            AllocateMemory(&SharePtr);
+        }
+        std::memcpy(SharePtr,Dataptr,ReadSize);
+        MachineFileWrite(filedescriptor, SharePtr, ReadSize, FileCallback, &ThreadList[RunningThreadID]);
+        Scheduler(VM_THREAD_STATE_WAITING);
+        DeallocateMemory(SharePtr);
+        *length += ThreadList[RunningThreadID].FileData;
+        Dataptr += ReadSize;
+    }
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
@@ -527,4 +557,69 @@ TVMStatus VMMutexRelease(TVMMutexID mutex) {
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
+bool AllocateMemory(void **pointer) {
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    for (auto & MemoryChunk : MemoryChunks)
+    {
+        if (!MemoryChunk.Occupied){
+            MemoryChunk.Occupied = true;
+            *pointer = MemoryChunk.Base;
+            MachineResumeSignals(&signal);
+            return true;
+        }
+    }
+    MachineResumeSignals(&signal);
+    // no memory available
+    return false;
 }
+void CreateShareMemory(void *pointer, int Size) {
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    int8_t * temp =  (int8_t *) pointer;
+    if ( Size % 512 == 0)
+        NumOfChunks = Size / 512;
+    else
+        NumOfChunks = Size / 512 + 1;
+    do{
+        Chunk C;
+        C.Base = temp;
+        C.Occupied = false;
+        MemoryChunks.push_back(C);
+        temp+= 512;
+    } while ((int)MemoryChunks.size() <= NumOfChunks);
+    MachineResumeSignals(&signal);
+}
+void DeallocateMemory(void *pointer) {
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    for (auto & MemoryChunk : MemoryChunks){
+        if (MemoryChunk.Base == pointer){
+            MemoryChunk.Occupied = false;
+        }
+    }
+    if (!MemoryWaitingList.empty()){
+        int id = MemoryWaitingList.front().ID;
+        for( int i = 0; i < MemoryChunks.size(); i ++){
+            if(MemoryChunks[i].Occupied){
+                MemoryWaitingList.erase(MemoryWaitingList.begin());
+                if(ThreadList[id].Priority > ThreadList[RunningThreadID].Priority){
+                    ThreadList[id].State = VM_THREAD_STATE_READY;
+                    Ready.push_back(ThreadList[id]);
+                    Scheduler(VM_THREAD_STATE_READY);
+                } else {
+                    ThreadList[id].State = VM_THREAD_STATE_READY;
+                    Ready.push_back(ThreadList[id]);
+                }
+            }
+        }
+    }
+    MachineResumeSignals(&signal);
+}
+}
+
+
+
+
+
+
