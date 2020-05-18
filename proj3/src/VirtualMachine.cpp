@@ -63,7 +63,17 @@ struct Chunk { //from OH
 std::vector<Chunk> MemoryChunks;
 std::vector<TCB> MemoryWaitingList;
 void debug() {
-    std:: cout << "Current Thread:" << RunningThreadID << std::endl;
+    std:: cout<< "CurrerntThread: " << RunningThreadID << std::endl;
+//    for (auto & i : MutexList){
+//        std::cout<< "ID: " << i.ID <<" TID: " << i.TID << " Locked: " << i.Locked << " Waiting: ";
+//        for ( auto & j : i.WaitingList){
+//            std::cout << j.ID<< " ";
+//        }
+//        std::cout << std::endl;
+//    }
+    for (auto & i : ThreadList){
+        std::cout<< "ID: " << i.ID <<" State: " << i.State << std::endl;
+    }
 }
 void SORT(std::vector<TCB> &Input) {//Bubble sort algorithm https://www.geeksforgeeks.org/bubble-sort/
     int i, j;
@@ -128,7 +138,6 @@ void Scheduler(TVMThreadState NextState) {
     }
     ThreadList[NextThread.ID].State = VM_THREAD_STATE_RUNNING;
     RunningThreadID = NextThread.ID;
-    //debug();
     MachineContextSwitch(&ThreadList[TempID].Context, &ThreadList[NextThread.ID].Context);
     MachineResumeSignals(&signal);
 }
@@ -144,7 +153,6 @@ void skeleton(void *param) {
     VMThreadTerminate(ThreadList[ID].ID);
 }
 TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, int argc, char *argv[]) {
-
     void *Sharememory = MachineInitialize(sharedsize);
     CreateShareMemory(Sharememory, sharedsize);
     Tickms = tickms;
@@ -217,10 +225,15 @@ VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThre
 TVMStatus VMThreadDelete(TVMThreadID thread) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
+    std::cout<<"thread: " << thread << std::endl;
+    debug();
     if(thread > ThreadList.size() || thread < 0){
         MachineResumeSignals(&signal);
+//        std::cout << "a" << std::endl;
         return VM_STATUS_ERROR_INVALID_ID;
     } else if (ThreadList[thread].State != VM_THREAD_STATE_DEAD ){
+//        std:: cout << thread << std::endl;
+//        debug();
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_STATE;
     }
@@ -259,6 +272,8 @@ TVMStatus VMThreadActivate(TVMThreadID thread) {
 TVMStatus VMThreadTerminate(TVMThreadID thread) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
+    std::cout<<"thread: " << thread << std::endl;
+    debug();
     if (thread > ThreadList.size() || thread < 0) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_ID;
@@ -266,9 +281,29 @@ TVMStatus VMThreadTerminate(TVMThreadID thread) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_STATE;
     }
+
     for (auto &i : MutexList) {
         if (i.Locked && i.TID == thread) {
-            VMMutexRelease(i.ID);
+            i.Locked = false;
+            TCB ReadyThread{};
+            if(!i.WaitingList.empty()){
+                SORT(i.WaitingList);
+                ReadyThread = i.WaitingList.front();
+                i.WaitingList.erase(i.WaitingList.begin());
+                if(ThreadList[ReadyThread.ID].HaveMutex){
+                    i.TID = ReadyThread.ID;
+                    i.Locked = true;
+                    if(ThreadList[ReadyThread.ID].Priority > ThreadList[RunningThreadID].Priority){
+                        ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
+                        Ready.push_back(ThreadList[ReadyThread.ID]);
+                        Scheduler(VM_THREAD_STATE_READY);
+                    } else {
+                        ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
+                        Ready.push_back(ThreadList[ReadyThread.ID]);
+                    }
+                }
+            }
+
         }
     }
     for (auto &i : ThreadList) {
@@ -289,7 +324,10 @@ TVMStatus VMThreadTerminate(TVMThreadID thread) {
             }
         }
     }
+
     ThreadList[thread].State = VM_THREAD_STATE_DEAD;
+    std::cout<<"thread: " << thread << std::endl;
+    debug();
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
@@ -490,18 +528,15 @@ TVMStatus VMMutexQuery(TVMMutexID mutex, TVMThreadIDRef ownerref) {
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
-
+//    std::cout<< RunningThreadID << " acquire " <<mutex <<" " << MutexList[mutex].TID;
+//    std:: cout << " "<< MutexList[mutex].Locked << " " << MutexList[mutex].WaitingList.size() << std:: endl;
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
     if (mutex >= MutexList.size() || mutex < 0) {
         MachineResumeSignals(&signal);
+//        std::cout<<"VM_STATUS_ERROR_INVALID_ID" << std::endl;
         return VM_STATUS_ERROR_INVALID_ID;
     }
-    if (timeout == VM_TIMEOUT_IMMEDIATE && MutexList[mutex].Locked) {
-        MachineResumeSignals(&signal);
-        return VM_STATUS_FAILURE;
-    }
-
     if (MutexList[mutex].Locked && MutexList[mutex].TID == RunningThreadID) {
         MachineResumeSignals(&signal);
         return VM_STATUS_SUCCESS;
@@ -511,6 +546,12 @@ TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
         MachineResumeSignals(&signal);
         return VM_STATUS_SUCCESS;
     }
+    if (timeout == VM_TIMEOUT_IMMEDIATE && MutexList[mutex].Locked) {
+        MachineResumeSignals(&signal);
+        return VM_STATUS_FAILURE;
+    }
+
+
     TCB WaitingThread = ThreadList[RunningThreadID];
     WaitingThread.HaveMutex = true;
     ThreadList[RunningThreadID] = WaitingThread;
@@ -524,22 +565,20 @@ TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMMutexRelease(TVMMutexID mutex) {
-//    if( RunningThreadID == 0){
-//        std::cout << "Mainthread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
-//    }
+//        std::cout << "Thread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
 
     if (mutex >= MutexList.size() || mutex < 0) {
+//        std::cout<<"VM_STATUS_ERROR_INVALID_ID" << std::endl;
         return VM_STATUS_ERROR_INVALID_ID;
     }
     if (MutexList[mutex].TID != RunningThreadID) {
-
+//        std::cout<<"VM_STATUS_ERROR_INVALID_STATE" << std::endl;
         return VM_STATUS_ERROR_INVALID_STATE;
     }
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-
     MutexList[mutex].Locked = false;
-    TCB ReadyThread;
+    TCB ReadyThread{};
     if (!MutexList[mutex].WaitingList.empty()) {
         SORT(MutexList[mutex].WaitingList);
         ReadyThread = MutexList[mutex].WaitingList.front();

@@ -260,7 +260,7 @@ void VMMain(int argc, char *argv[]){
     VMPrint("VMMain VMThreadTerminate appears OK.\n");
     VMPrint("VMMain testing VMMutexAcquire\n");
     if(VM_STATUS_SUCCESS != VMMutexAcquire(TheMutex, VM_TIMEOUT_IMMEDIATE)){
-        VMPrint("VMMutexAcquire doesn't handle terminated owners.\n");    
+        VMPrint("VMMutexAcquire doesn't handle terminated owners.\n");
         return;
     }
     if(VM_STATUS_SUCCESS != VMMutexQuery(TheMutex, &MutexOwner)){
