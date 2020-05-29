@@ -567,11 +567,9 @@ TVMStatus VMMutexRelease(TVMMutexID mutex) {
 //    std::cout << "Thread: " << RunningThreadID << " release mutex: " << mutex << std::endl;
 //    debug();
     if (mutex >= MutexList.size() || mutex < 0) {
-        std::cout<<"VM_STATUS_ERROR_INVALID_ID" << std::endl;
         return VM_STATUS_ERROR_INVALID_ID;
     }
     if (MutexList[mutex].TID != RunningThreadID) {
-        std::cout<<"VM_STATUS_ERROR_INVALID_STATE" << std::endl;
         return VM_STATUS_ERROR_INVALID_STATE;
     }
     TMachineSignalState signal;
@@ -588,7 +586,6 @@ TVMStatus VMMutexRelease(TVMMutexID mutex) {
             MutexList[mutex].TID = ReadyThread.ID;
             if (ThreadList[ReadyThread.ID].Priority > ThreadList[RunningThreadID].Priority) {
                 ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
-//                Ready.push_back(ThreadList[ReadyThread.ID]);
                 Scheduler(VM_THREAD_STATE_READY, ReadyThread.ID);
             }
             else {
@@ -659,9 +656,3 @@ void DeallocateMemory(void *pointer) {
     MachineResumeSignals(&signal);
 }
 }
-
-
-
-
-
-
