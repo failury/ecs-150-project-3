@@ -102,7 +102,7 @@ public:
         for(int i = 0; i < BPB.BPB_FATSz16; i++){
             ReadSector(BPB.BPB_RsvdSecCnt + i, 0, 512);
             for(int j = 0;j < 512; j+=2){
-                uint16_t result = Buffer[i] + ((uint16_t)(Buffer[i + 1]) << 8 );
+                uint16_t result =(int) Buffer[j] + ((uint16_t)(Buffer[j + 1]) << 8 );
                 Entries.push_back(result);
             }
         }
@@ -763,11 +763,7 @@ void Mount(const char *Image) {
         BPB.ClusterCount = (BPB.BPB_TotSec16 - BPB.FirstDataSector) / BPB.BPB_SecPerClus;
     //Reading FAT
     Fat.Read();
-//    for(int i = 0; i <BPB.BPB_FATSz16 *256 ; i++ ){
-//        printf("%04X",Fat.Entries[i]);
-//        printf("%s"," ");
-//    }
-    std::cout << BPB.ClusterCount;
+    
 }
 }
 
