@@ -24,7 +24,7 @@ typedef void (*TVMMainEntry)(int, char *[]);
 TVMStatus VMFilePrint(int filedescriptor, const char *format, ...);
 #define VM_TIMEOUT_INFINITE ((TVMTick)0)
 #define VM_TIMEOUT_IMMEDIATE ((TVMTick)-1)
-void Scheduler(TVMThreadState NextState,int Next);
+void Scheduler(TVMThreadState NextState, int Next);
 volatile int Tickms = 0;
 volatile int tickCount = 0;
 volatile TVMThreadID RunningThreadID;
@@ -71,11 +71,11 @@ std::vector<Chunk> MemoryChunks;
 std::vector<TCB> MemoryWaitingList;
 TVMMutexID FSMutex;
 volatile int FileSystemFD;
-uint8_t * Buffer;
+uint8_t *Buffer;
 volatile int DirectoryIndex;
 std::vector<int> FileDescriptors;
-volatile int GlobalFD;
-struct BPB{
+volatile int GlobalFD = 4;
+struct BPB {
     uint32_t BS_jmpBoot;
     uint8_t BS_OEMName[8];
     uint16_t BPB_BytsPerSec;
@@ -101,14 +101,15 @@ struct BPB{
     int FirstDataSector;
     int ClusterCount;
 } BPB;
-class FAT{
+class FAT {
 public:
     std::vector<uint16_t> Entries;
-    void Read(){
-        for(int i = 0; i < BPB.BPB_FATSz16; i++){
+
+    void Read() {
+        for (int i = 0; i < BPB.BPB_FATSz16; i++) {
             ReadSector(BPB.BPB_RsvdSecCnt + i, 0, 512);
-            for(int j = 0;j < 512; j+=2){
-                uint16_t result =(int) Buffer[j] + ((uint16_t)(Buffer[j + 1]) << 8 );
+            for (int j = 0; j < 512; j += 2) {
+                uint16_t result = (int) Buffer[j] + ((uint16_t) (Buffer[j + 1]) << 8);
                 Entries.push_back(result);
             }
         }
@@ -125,7 +126,7 @@ public:
 //    }
 };
 FAT Fat;
-class File{
+class File {
 public:
     bool Changed;
     bool Accessed;
@@ -134,7 +135,8 @@ public:
     uint16_t FirstClusterNum;
     uint8_t Ntr;
     uint16_t DIR_FstClusLO;
-    class fileinfo{
+
+    class fileinfo {
     public:
         int FD;
         TVMThreadID TID;
@@ -143,51 +145,60 @@ public:
         int ClustorOffest;
         int ClustorNum;
     };
+
     std::vector<fileinfo> FIS;
 
     SVMDirectoryEntry FileEntry;
-    File(){};
+
+    File() {};
+
     File(int i, int j) {
         Changed = false;
         Offest = j * 512 + i;
-        Size = (uint32_t)(Buffer[i + 28] + (((uint16_t)Buffer[i + 29])<<8) + (((uint32_t)Buffer[i + 30])<<16) + (((uint32_t)Buffer[i + 31])<<24));
+        Size = (uint32_t) (Buffer[i + 28] + (((uint16_t) Buffer[i + 29]) << 8) + (((uint32_t) Buffer[i + 30]) << 16) +
+                           (((uint32_t) Buffer[i + 31]) << 24));
         FileEntry.DSize = Size;
-        FirstClusterNum = (uint16_t)(Buffer[i + 26] + (((uint16_t)Buffer[i + 27])<<8));
-        FileEntry.DAttributes = (uint8_t)Buffer[i + 11];
+        FirstClusterNum = (uint16_t) (Buffer[i + 26] + (((uint16_t) Buffer[i + 27]) << 8));
+        FileEntry.DAttributes = (uint8_t) Buffer[i + 11];
         std::string FileName;
         for (int k = 0; k < 11; k++) {
             if (k == 8 && !(FileEntry.DAttributes & 0x10)) FileName.push_back('.');
             if (Buffer[i + k] == ' ') continue;
             FileName.push_back(Buffer[i + k]);
         }
-        Ntr = (uint8_t)Buffer[i + 12];
-        DIR_FstClusLO = (uint16_t)Buffer[i + 26];
+        Ntr = (uint8_t) Buffer[i + 12];
+        DIR_FstClusLO = (uint16_t) Buffer[i + 26];
         strcpy(FileEntry.DShortFileName, FileName.c_str());
-        uint16_t Temp = (uint16_t)(Buffer[i + 14] + (((uint16_t)Buffer[i + 15])<<8));
+        uint16_t Temp = (uint16_t) (Buffer[i + 14] + (((uint16_t) Buffer[i + 15]) << 8));
         FileEntry.DCreate.DSecond = (Temp & 0x1f) << 1;
         FileEntry.DCreate.DMinute = (Temp >> 5) & 0x3f;
-        FileEntry.DCreate.DHour   =  Temp >> 11;
-        Temp = (uint16_t)(Buffer[i + 16] + (((uint16_t)Buffer[i + 17])<<8));
-        FileEntry.DCreate.DDay    = Temp & 0x1f;
-        FileEntry.DCreate.DMonth  = (Temp >> 5) & 0x0f;
-        FileEntry.DCreate.DYear   = (Temp >> 9) + 1980;
+        FileEntry.DCreate.DHour = Temp >> 11;
+        Temp = (uint16_t) (Buffer[i + 16] + (((uint16_t) Buffer[i + 17]) << 8));
+        FileEntry.DCreate.DDay = Temp & 0x1f;
+        FileEntry.DCreate.DMonth = (Temp >> 5) & 0x0f;
+        FileEntry.DCreate.DYear = (Temp >> 9) + 1980;
         FileEntry.DCreate.DHundredth = Buffer[i + 13];
-        Temp = (uint16_t)(Buffer[i + 18] + (((uint16_t)Buffer[i + 19])<<8));
-        FileEntry.DAccess.DDay    = Temp & 0x1f;
-        FileEntry.DAccess.DMonth  = (Temp >> 5) & 0x0f;
-        FileEntry.DAccess.DYear   = (Temp >> 9) + 1980;
-        Temp = (uint16_t)(Buffer[i + 22] + (((uint16_t)Buffer[i + 23])<<8));
+        Temp = (uint16_t) (Buffer[i + 18] + (((uint16_t) Buffer[i + 19]) << 8));
+        FileEntry.DAccess.DDay = Temp & 0x1f;
+        FileEntry.DAccess.DMonth = (Temp >> 5) & 0x0f;
+        FileEntry.DAccess.DYear = (Temp >> 9) + 1980;
+        Temp = (uint16_t) (Buffer[i + 22] + (((uint16_t) Buffer[i + 23]) << 8));
         FileEntry.DModify.DSecond = (Temp & 0x1f) << 1;
         FileEntry.DModify.DMinute = (Temp >> 5) & 0x3f;
-        FileEntry.DModify.DHour   = (Temp >> 11) & 0x1f;
-        Temp = (uint16_t)(Buffer[i + 24] + (((uint16_t)Buffer[i + 25])<<8));
-        FileEntry.DModify.DDay    = Temp & 0x1f;
-        FileEntry.DModify.DMonth  = (Temp >> 5) & 0x0f;
-        FileEntry.DModify.DYear   = (Temp >> 9) + 1980;
+        FileEntry.DModify.DHour = (Temp >> 11) & 0x1f;
+        Temp = (uint16_t) (Buffer[i + 24] + (((uint16_t) Buffer[i + 25]) << 8));
+        FileEntry.DModify.DDay = Temp & 0x1f;
+        FileEntry.DModify.DMonth = (Temp >> 5) & 0x0f;
+        FileEntry.DModify.DYear = (Temp >> 9) + 1980;
     }
-    bool Open(int* FileDesscriptor, int Flags){
-        if( (  (Flags & O_RDWR) || (Flags & O_WRONLY) || (Flags & O_APPEND) || (Flags & O_TRUNC)  ) && FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_READ_ONLY) return false;
-        else if(FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_VOLUME_ID || FileEntry.DAttributes ==VM_FILE_SYSTEM_ATTR_DIRECTORY ) return false;
+
+    bool Open(int *FileDesscriptor, int Flags) {
+        if (((Flags & O_RDWR) || (Flags & O_WRONLY) || (Flags & O_APPEND) || (Flags & O_TRUNC)) &&
+            FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_READ_ONLY)
+            return false;
+        else if (FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_VOLUME_ID ||
+                 FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_DIRECTORY)
+            return false;
         fileinfo FI;
         FI.TID = RunningThreadID;
         FI.Flag = Flags;
@@ -195,16 +206,14 @@ public:
         FI.ClustorOffest = 0;
         FI.ClustorNum = FirstClusterNum;
         Accessed = true;
-        if( FileDescriptors.size() > 0){
+        if (FileDescriptors.size() > 0) {
             FI.FD = FileDescriptors[0];
             FileDescriptors.erase(FileDescriptors.begin());
-        }
-        else {
+        } else {
             FI.FD = GlobalFD;
             GlobalFD++;
         }
-        if(Flags & O_APPEND)
-        {
+        if (Flags & O_APPEND) {
             FI.ByteOffest = Size % (BPB.BPB_SecPerClus * 512);
             FI.ClustorOffest = Size / (BPB.BPB_SecPerClus * 512);
             while (Fat.Entries[FirstClusterNum] < 0xFFF8) {
@@ -218,8 +227,19 @@ public:
         VMDateTime(&FileEntry.DAccess);
         return true;
     }
+    bool Close (int Index){
+        for ( int i = 0; i < ThreadList[RunningThreadID].FDS.size(); i++){
+            if(  ThreadList[RunningThreadID].FDS[i] == FIS[Index].FD){
+                FIS.erase(FIS.begin() + Index);
+                ThreadList[RunningThreadID].FDS.erase(ThreadList[RunningThreadID].FDS.begin() + i);
+                VMDateTime(&FileEntry.DAccess);
+                return true;
+            }
+        }
+        return false;
+    }
 };
-class Directory{
+class Directory {
 public:
     File DirFile;
     std::vector<File> files;
@@ -229,11 +249,11 @@ public:
 };
 std::vector<Directory> Directories;
 void debug() {
-    std:: cout<< "CurrerntThread: " << RunningThreadID << std::endl;
-    for (auto & i : MutexList){
-        std::cout<< "ID: " << i.ID <<" TID: " << i.TID << " Locked: " << i.Locked << " Waiting: ";
-        for ( auto & j : i.WaitingList){
-            std::cout << j.ID<< " ";
+    std::cout << "CurrerntThread: " << RunningThreadID << std::endl;
+    for (auto &i : MutexList) {
+        std::cout << "ID: " << i.ID << " TID: " << i.TID << " Locked: " << i.Locked << " Waiting: ";
+        for (auto &j : i.WaitingList) {
+            std::cout << j.ID << " ";
         }
         std::cout << std::endl;
     }
@@ -253,7 +273,7 @@ void Callback(void *CallData) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
     tickCount++;
-    if( ThreadList.size() > 0){
+    if (ThreadList.size() > 0) {
         for (int i = 0; i < (int) Sleep.size(); i++) {
             if (Sleep[i].SleepTime != -1000000) {
                 Sleep[i].SleepTime--;
@@ -277,7 +297,7 @@ void Scheduler(TVMThreadState NextState, int Next) {
     MachineSuspendSignals(&signal);
     TCB NextThread;
     int TempID = RunningThreadID;
-    if (Next == -1){
+    if (Next == -1) {
 
         NextThread = ThreadList[1];
         if (!Ready.empty()) {
@@ -288,7 +308,7 @@ void Scheduler(TVMThreadState NextState, int Next) {
                 NextThread = ThreadList[NextThread.ID];
             }
         }
-    }else {
+    } else {
         NextThread = ThreadList[Next];
     }
 
@@ -324,7 +344,7 @@ void skeleton(void *param) {
     ThreadList[ID].Entry(ThreadList[ID].Param);
     VMThreadTerminate(ThreadList[ID].ID);
 }
-TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, const char *mount, int argc, char *argv[]){
+TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, const char *mount, int argc, char *argv[]) {
     void *Sharememory = MachineInitialize(sharedsize);
     CreateShareMemory(Sharememory, sharedsize);
     Tickms = tickms;
@@ -398,13 +418,13 @@ VMThreadCreate(TVMThreadEntry entry, void *param, TVMMemorySize memsize, TVMThre
 TVMStatus VMThreadDelete(TVMThreadID thread) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    if(thread > ThreadList.size() || thread < 0){
+    if (thread > ThreadList.size() || thread < 0) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_ID;
-    } else if (!ThreadList[thread].Dead){
+    } else if (!ThreadList[thread].Dead) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_STATE;
-    } else if (ThreadList[thread].Dead){
+    } else if (ThreadList[thread].Dead) {
         ThreadList.erase(ThreadList.begin() + thread);
     }
 
@@ -451,16 +471,16 @@ TVMStatus VMThreadTerminate(TVMThreadID thread) {
         if (i.Locked && i.TID == thread) {
             i.Locked = false;
             TCB ReadyThread{};
-            if(!i.WaitingList.empty()){
+            if (!i.WaitingList.empty()) {
                 SORT(i.WaitingList);
                 ReadyThread = i.WaitingList.front();
                 i.WaitingList.erase(i.WaitingList.begin());
-                if(ThreadList[ReadyThread.ID].HaveMutex){
+                if (ThreadList[ReadyThread.ID].HaveMutex) {
                     i.TID = ReadyThread.ID;
                     i.Locked = true;
-                    if(ThreadList[ReadyThread.ID].Priority > ThreadList[RunningThreadID].Priority){
+                    if (ThreadList[ReadyThread.ID].Priority > ThreadList[RunningThreadID].Priority) {
                         ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
-                        Scheduler(VM_THREAD_STATE_READY,ReadyThread.ID);
+                        Scheduler(VM_THREAD_STATE_READY, ReadyThread.ID);
                     } else {
                         ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
                         Ready.push_back(ThreadList[ReadyThread.ID]);
@@ -472,15 +492,15 @@ TVMStatus VMThreadTerminate(TVMThreadID thread) {
     }
     for (auto &i : ThreadList) {
         if (i.ID == thread) {
-            if ( i.State == VM_THREAD_STATE_RUNNING){
-                if(Ready.empty() && Sleep.empty()){
+            if (i.State == VM_THREAD_STATE_RUNNING) {
+                if (Ready.empty() && Sleep.empty()) {
                     MachineResumeSignals(&signal);
                     return VM_STATUS_SUCCESS;
                 }
                 Scheduler(VM_THREAD_STATE_DEAD, -1);
-            }else if ( ThreadList[thread].State == VM_THREAD_STATE_WAITING){
-                for (int j = 0 ; j < (int)Sleep.size();j++){
-                    if(ThreadList[Sleep[j].ID].ID == thread){
+            } else if (ThreadList[thread].State == VM_THREAD_STATE_WAITING) {
+                for (int j = 0; j < (int) Sleep.size(); j++) {
+                    if (ThreadList[Sleep[j].ID].ID == thread) {
                         Sleep.erase(Sleep.begin() + j);
                         break;
                     }
@@ -544,22 +564,29 @@ TVMStatus VMFileOpen(const char *filename, int flags, int mode,
         return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
     std::string NameStr(filename, filename + strlen(filename));
-    std::transform(NameStr.begin(), NameStr.end(),NameStr.begin(), ::toupper);
-    if(flags & O_CREAT){
-        if(!Directories[DirectoryIndex].files[Directories[DirectoryIndex].files.size()-1].Open(filedescriptor,flags)){
+    std::transform(NameStr.begin(), NameStr.end(), NameStr.begin(), ::toupper);
+    if (flags & O_CREAT) {
+        if (!Directories[DirectoryIndex].files[Directories[DirectoryIndex].files.size() - 1].Open(filedescriptor,
+                                                                                                  flags)) {
             MachineResumeSignals(&signal);
             return VM_STATUS_FAILURE;
         }
-        Directories[DirectoryIndex].files[Directories[DirectoryIndex].files.size()-1].Open(filedescriptor,flags);
+        Directories[DirectoryIndex].files[Directories[DirectoryIndex].files.size() - 1].Open(filedescriptor, flags);
     }
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMFileClose(int filedescriptor) {
+    int index = 0;
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    MachineFileClose(filedescriptor, FileCallback, &ThreadList[RunningThreadID]);
-    Scheduler(VM_THREAD_STATE_WAITING, -1);
+    if( filedescriptor < 3 ){
+        MachineFileClose(filedescriptor, FileCallback, &ThreadList[RunningThreadID]);
+        Scheduler(VM_THREAD_STATE_WAITING, -1);
+        MachineResumeSignals(&signal);
+        return VM_STATUS_SUCCESS;
+    }
+    Directories[DirectoryIndex].files[index].Close(index);
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
@@ -729,7 +756,7 @@ TVMStatus VMMutexAcquire(TVMMutexID mutex, TVMTick timeout) {
 
     VMThreadSleep(timeout);
     MachineResumeSignals(&signal);
-    if(MutexList[mutex].TID != RunningThreadID){
+    if (MutexList[mutex].TID != RunningThreadID) {
         return VM_STATUS_FAILURE;
     }
 
@@ -759,8 +786,7 @@ TVMStatus VMMutexRelease(TVMMutexID mutex) {
             if (ThreadList[ReadyThread.ID].Priority > ThreadList[RunningThreadID].Priority) {
                 ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
                 Scheduler(VM_THREAD_STATE_READY, ReadyThread.ID);
-            }
-            else {
+            } else {
                 ThreadList[ReadyThread.ID].State = VM_THREAD_STATE_READY;
                 Ready.push_back(ThreadList[ReadyThread.ID]);
             }
@@ -811,7 +837,7 @@ void DeallocateMemory(void *pointer) {
     }
     if (!MemoryWaitingList.empty()) {
         int id = MemoryWaitingList.front().ID;
-        for (auto & MemoryChunk : MemoryChunks) {
+        for (auto &MemoryChunk : MemoryChunks) {
             if (MemoryChunk.Occupied) {
                 MemoryWaitingList.erase(MemoryWaitingList.begin());
                 if (ThreadList[id].Priority > ThreadList[RunningThreadID].Priority) {
@@ -827,24 +853,24 @@ void DeallocateMemory(void *pointer) {
     }
     MachineResumeSignals(&signal);
 }
-void ReadSector(int SectorOffset, int BytesOffset, int NumBytes){
+void ReadSector(int SectorOffset, int BytesOffset, int NumBytes) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    MachineFileSeek(FileSystemFD, SectorOffset * 512 + BytesOffset, 0, FileCallback,&ThreadList[RunningThreadID]);
+    MachineFileSeek(FileSystemFD, SectorOffset * 512 + BytesOffset, 0, FileCallback, &ThreadList[RunningThreadID]);
     ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
     Scheduler(VM_THREAD_STATE_WAITING, -1);
-    MachineFileRead(FileSystemFD, Buffer, NumBytes, FileCallback,&ThreadList[RunningThreadID]);
+    MachineFileRead(FileSystemFD, Buffer, NumBytes, FileCallback, &ThreadList[RunningThreadID]);
     ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
     Scheduler(VM_THREAD_STATE_WAITING, -1);
     MachineResumeSignals(&signal);
 }
-void WriteSector(int SectorOffset, int BytesOffset, int NumBytes){
+void WriteSector(int SectorOffset, int BytesOffset, int NumBytes) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    MachineFileSeek(FileSystemFD, SectorOffset * 512 + BytesOffset, 0, FileCallback,&ThreadList[RunningThreadID]);
+    MachineFileSeek(FileSystemFD, SectorOffset * 512 + BytesOffset, 0, FileCallback, &ThreadList[RunningThreadID]);
     ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
     Scheduler(VM_THREAD_STATE_WAITING, -1);
-    MachineFileWrite(FileSystemFD, Buffer, NumBytes, FileCallback,&ThreadList[RunningThreadID]);
+    MachineFileWrite(FileSystemFD, Buffer, NumBytes, FileCallback, &ThreadList[RunningThreadID]);
     ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
     Scheduler(VM_THREAD_STATE_WAITING, -1);
     MachineResumeSignals(&signal);
@@ -855,17 +881,17 @@ void Mount(const char *Image) {
     ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
     Scheduler(VM_THREAD_STATE_WAITING, -1);
     FileSystemFD = ThreadList[0].FileData;
-    AllocateMemory((void**)&Buffer);
+    AllocateMemory((void **) &Buffer);
     //Reading BPB
-    ReadSector(0,0,512);
-    BPB.BPB_SecPerClus = *(uint8_t*)(Buffer+ 13);
-    BPB.BPB_RsvdSecCnt = *(uint16_t*)(Buffer+ 14);
-    BPB.BPB_NumFATs =  *(uint8_t*)(Buffer+ 16);
-    BPB.BPB_RootEntCnt = *(uint16_t*)(Buffer+ 17);
-    BPB.BPB_TotSec16 = *(uint16_t*)(Buffer+ 19);
-    BPB.BPB_FATSz16 = *(uint16_t*)(Buffer+ 22);
-    BPB.BPB_SecPerTrk = *(uint16_t*)(Buffer+ 24);
-    BPB.BPB_TotSec32 = *(uint32_t*)(Buffer+ 32);
+    ReadSector(0, 0, 512);
+    BPB.BPB_SecPerClus = *(uint8_t *) (Buffer + 13);
+    BPB.BPB_RsvdSecCnt = *(uint16_t *) (Buffer + 14);
+    BPB.BPB_NumFATs = *(uint8_t *) (Buffer + 16);
+    BPB.BPB_RootEntCnt = *(uint16_t *) (Buffer + 17);
+    BPB.BPB_TotSec16 = *(uint16_t *) (Buffer + 19);
+    BPB.BPB_FATSz16 = *(uint16_t *) (Buffer + 22);
+    BPB.BPB_SecPerTrk = *(uint16_t *) (Buffer + 24);
+    BPB.BPB_TotSec32 = *(uint32_t *) (Buffer + 32);
     BPB.FirstRootSector = BPB.BPB_RsvdSecCnt + BPB.BPB_NumFATs * BPB.BPB_FATSz16;
     BPB.RootDirectorySectors = (BPB.BPB_RootEntCnt * 32) / 512;
     BPB.FirstDataSector = BPB.FirstRootSector + BPB.RootDirectorySectors;
@@ -877,26 +903,26 @@ void Mount(const char *Image) {
     Fat.Read();
     ReadRoot();
 }
-void ReadRoot(){
+void ReadRoot() {
     Directory Root;
-    for ( int i = 0; i < BPB.RootDirectorySectors; i++){
+    for (int i = 0; i < BPB.RootDirectorySectors; i++) {
         ReadSector(BPB.FirstRootSector + i, 0, 512);
-        for(int j = 0; j < 512; j+=32){
-            if(Buffer[j] == 0x00){
+        for (int j = 0; j < 512; j += 32) {
+            if (Buffer[j] == 0x00) {
                 Root.FFB = 512 * i + j;
                 Directories.push_back(Root);
                 return;
             }
-            if(Buffer[j] == 0x0E5) {
+            if (Buffer[j] == 0x0E5) {
                 //the directory entry is free
                 continue;
             }
-            if(Buffer[j + 11] == 0x0f){
-                if(Buffer[j] == 0x01) j+=32;
+            if (Buffer[j + 11] == 0x0f) {
+                if (Buffer[j] == 0x01) j += 32;
                 continue;
             }
-            File file(j,i);
-            if( i == 0 && j == 0 ) Root.DirFile = file;
+            File file(j, i);
+            if (i == 0 && j == 0) Root.DirFile = file;
             Root.files.push_back(file);
         }
     }
