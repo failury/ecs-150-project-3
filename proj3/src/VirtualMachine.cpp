@@ -12,6 +12,7 @@
 #include <vector>
 #include <algorithm>
 #include <bits/stdc++.h>
+#include <fcntl.h>
 
 
 extern "C" {
@@ -30,7 +31,9 @@ int NumOfChunks;
 void CreateShareMemory(void *pointer, int Size);
 bool AllocateMemory(void **pointer);
 void DeallocateMemory(void *pointer);
-
+void Mount(const char *Image);
+void ReadSector(int SectorOffset, int BytesOffset, int NumBytes);
+void WriteSector(int SectorOffset, int BytesOffset, int NumBytes);
 struct TCB {
     //define tcb model
     TVMThreadID ID;
@@ -63,6 +66,62 @@ struct Chunk { //from OH
 };
 std::vector<Chunk> MemoryChunks;
 std::vector<TCB> MemoryWaitingList;
+TVMMutexID FSMutex;
+volatile int FileSystemFD;
+uint8_t * Buffer;
+struct BPB{
+    uint32_t BS_jmpBoot;
+    uint8_t BS_OEMName[8];
+    uint16_t BPB_BytsPerSec;
+    uint8_t BPB_SecPerClus;
+    uint16_t BPB_RsvdSecCnt;
+    uint8_t BPB_NumFATs;
+    uint16_t BPB_RootEntCnt;
+    uint16_t BPB_TotSec16;
+    uint8_t BPB_Media;
+    uint16_t BPB_FATSz16;
+    uint16_t BPB_SecPerTrk;
+    uint16_t BPB_NumHeads;
+    uint32_t BPB_HiddSec;
+    uint32_t BPB_TotSec32;
+    uint8_t BS_DrvNum;
+    uint8_t BS_Reserved1;
+    uint8_t BS_BootSig;
+    uint32_t BS_VolID;
+    uint8_t BS_VolLab[11];
+    uint8_t BS_FilSysType[8];
+    int FirstRootSector;
+    int RootDirectorySectors;
+    int FirstDataSector;
+    int ClusterCount;
+} BPB;
+class FAT{
+public:
+    std::vector<uint16_t> Entries;
+    void Read(){
+        for(int i = 0; i < BPB.BPB_FATSz16; i++){
+            ReadSector(BPB.BPB_RsvdSecCnt + i, 0, 512);
+            for(int j = 0;j < 512; j+=2){
+                uint16_t result = Buffer[i] + ((uint16_t)(Buffer[i + 1]) << 8 );
+                Entries.push_back(result);
+            }
+        }
+    }
+//    void Write(){
+//        for ( int a = 0;a < BPB.BPB_NumFATs; a++){
+//            for(int i = 0; i < BPB.BPB_FATSz16; i++){
+//                for(int j = 0;j < 256; j++){
+//                    int result = Buffer[i] + ((uint16_t)(Buffer[i + 1]) << 8 );
+//                    Entries.push_back(result);
+//                }
+//            }
+//        }
+//    }
+};
+FAT Fat;
+class Directory{
+
+};
 void debug() {
     std:: cout<< "CurrerntThread: " << RunningThreadID << std::endl;
     for (auto & i : MutexList){
@@ -139,7 +198,7 @@ void Scheduler(TVMThreadState NextState, int Next) {
         ThreadList[RunningThreadID].State = VM_THREAD_STATE_DEAD;
     }
     if (NextThread.ID == RunningThreadID) {
-        //no neeed to switch
+        //no need to switch
         MachineResumeSignals(&signal);
         return;
     }
@@ -159,7 +218,7 @@ void skeleton(void *param) {
     ThreadList[ID].Entry(ThreadList[ID].Param);
     VMThreadTerminate(ThreadList[ID].ID);
 }
-TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, int argc, char *argv[]) {
+TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, const char *mount, int argc, char *argv[]){
     void *Sharememory = MachineInitialize(sharedsize);
     CreateShareMemory(Sharememory, sharedsize);
     Tickms = tickms;
@@ -167,7 +226,6 @@ TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, int argc, char *argv[]) 
     TVMMainEntry entry = VMLoadModule(argv[0]);
     if (entry != NULL) {
         TVMThreadID id;
-        MachineEnableSignals();
         VMThreadCreate(skeleton, NULL, 0x100000, VM_THREAD_PRIORITY_NORMAL, &id);//creating main thread
         VMThreadCreate(IdleThread, NULL, 0x100000, 0, &id);// creating idel thread
         VMThreadActivate(id);
@@ -176,6 +234,8 @@ TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, int argc, char *argv[]) 
         MachineTerminate();
         return VM_STATUS_FAILURE;
     }
+    Mount(mount);
+    MachineEnableSignals();
     entry(argc, argv);
     VMUnloadModule();
     MachineTerminate();
@@ -655,4 +715,60 @@ void DeallocateMemory(void *pointer) {
     }
     MachineResumeSignals(&signal);
 }
+void ReadSector(int SectorOffset, int BytesOffset, int NumBytes){
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    MachineFileSeek(FileSystemFD, SectorOffset * 512 + BytesOffset, 0, FileCallback,&ThreadList[RunningThreadID]);
+    ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
+    Scheduler(VM_THREAD_STATE_WAITING, -1);
+    MachineFileRead(FileSystemFD, Buffer, NumBytes, FileCallback,&ThreadList[RunningThreadID]);
+    ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
+    Scheduler(VM_THREAD_STATE_WAITING, -1);
+    MachineResumeSignals(&signal);
 }
+void WriteSector(int SectorOffset, int BytesOffset, int NumBytes){
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    MachineFileSeek(FileSystemFD, SectorOffset * 512 + BytesOffset, 0, FileCallback,&ThreadList[RunningThreadID]);
+    ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
+    Scheduler(VM_THREAD_STATE_WAITING, -1);
+    MachineFileWrite(FileSystemFD, Buffer, NumBytes, FileCallback,&ThreadList[RunningThreadID]);
+    ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
+    Scheduler(VM_THREAD_STATE_WAITING, -1);
+    MachineResumeSignals(&signal);
+}
+void Mount(const char *Image) {
+    VMMutexCreate(&FSMutex);
+    MachineFileOpen(Image, O_RDWR, 0, FileCallback, &ThreadList[RunningThreadID]);
+    ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
+    Scheduler(VM_THREAD_STATE_WAITING, -1);
+    FileSystemFD = ThreadList[0].FileData;
+    AllocateMemory((void**)&Buffer);
+    //Reading BPB
+    ReadSector(0,0,512);
+    BPB.BPB_SecPerClus = *(uint8_t*)(Buffer+ 13);
+    BPB.BPB_RsvdSecCnt = *(uint16_t*)(Buffer+ 14);
+    BPB.BPB_NumFATs =  *(uint8_t*)(Buffer+ 16);
+    BPB.BPB_RootEntCnt = *(uint16_t*)(Buffer+ 17);
+    BPB.BPB_TotSec16 = *(uint16_t*)(Buffer+ 19);
+    BPB.BPB_FATSz16 = *(uint16_t*)(Buffer+ 22);
+    BPB.BPB_SecPerTrk = *(uint16_t*)(Buffer+ 24);
+    BPB.BPB_TotSec32 = *(uint32_t*)(Buffer+ 32);
+    BPB.FirstRootSector = BPB.BPB_RsvdSecCnt + BPB.BPB_NumFATs * BPB.BPB_FATSz16;
+    BPB.RootDirectorySectors = (BPB.BPB_RootEntCnt * 32) / 512;
+    BPB.FirstDataSector = BPB.FirstRootSector + BPB.RootDirectorySectors;
+    if (BPB.BPB_TotSec16 == 0)
+        BPB.ClusterCount = (BPB.BPB_TotSec32 - BPB.FirstDataSector) / BPB.BPB_SecPerClus;
+    else
+        BPB.ClusterCount = (BPB.BPB_TotSec16 - BPB.FirstDataSector) / BPB.BPB_SecPerClus;
+    //Reading FAT
+    Fat.Read();
+//    for(int i = 0; i <BPB.BPB_FATSz16 *256 ; i++ ){
+//        printf("%04X",Fat.Entries[i]);
+//        printf("%s"," ");
+//    }
+    std::cout << BPB.ClusterCount;
+}
+}
+
+

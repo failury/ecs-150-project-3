@@ -533,7 +533,7 @@ void MachineRequestAlarm(useconds_t usec, TMachineAlarmCallback callback, void *
     }
 }
 
-void MachineFileOpen(const char *filename, int flags, int mode, TMachineFileCallback callback, void *calldata){
+    void MachineFileOpen(const char *filename, int flags, int mode, TMachineFileCallback callback, void *calldata){
     if(MachineInitialized){
         TMachineSignalState SignalState;
         uint8_t Buffer[MACHINE_MAX_MESSAGE_SIZE];

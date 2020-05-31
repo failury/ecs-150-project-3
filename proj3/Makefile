@@ -22,7 +22,7 @@ OBJS=$(OBJ_DIR)/Machine.o \
 MODOBJS=$(OBJ_DIR)/module.o
      
      
-#DEBUG_MODE=TRUE
+DEBUG_MODE=TRUE
 UNAME := $(shell uname)
 
 ifdef DEBUG_MODE
