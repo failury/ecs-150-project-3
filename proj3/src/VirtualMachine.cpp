@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <bits/stdc++.h>
 #include <fcntl.h>
+#include <string>
 
 
 extern "C" {
@@ -34,6 +35,7 @@ void DeallocateMemory(void *pointer);
 void Mount(const char *Image);
 void ReadSector(int SectorOffset, int BytesOffset, int NumBytes);
 void WriteSector(int SectorOffset, int BytesOffset, int NumBytes);
+void ReadRoot();
 struct TCB {
     //define tcb model
     TVMThreadID ID;
@@ -49,6 +51,7 @@ struct TCB {
     bool HaveMutex;
     int AllocatedSize;
     bool Dead;
+    std::vector<int> FDS;
 };
 std::vector<TCB> ThreadList;
 std::vector<TCB> Ready;
@@ -69,6 +72,9 @@ std::vector<TCB> MemoryWaitingList;
 TVMMutexID FSMutex;
 volatile int FileSystemFD;
 uint8_t * Buffer;
+volatile int DirectoryIndex;
+std::vector<int> FileDescriptors;
+volatile int GlobalFD;
 struct BPB{
     uint32_t BS_jmpBoot;
     uint8_t BS_OEMName[8];
@@ -119,9 +125,109 @@ public:
 //    }
 };
 FAT Fat;
+class File{
+public:
+    bool Changed;
+    bool Accessed;
+    int Offest;
+    uint32_t Size;
+    uint16_t FirstClusterNum;
+    uint8_t Ntr;
+    uint16_t DIR_FstClusLO;
+    class fileinfo{
+    public:
+        int FD;
+        TVMThreadID TID;
+        int Flag;
+        int ByteOffest;
+        int ClustorOffest;
+        int ClustorNum;
+    };
+    std::vector<fileinfo> FIS;
+
+    SVMDirectoryEntry FileEntry;
+    File(){};
+    File(int i, int j) {
+        Changed = false;
+        Offest = j * 512 + i;
+        Size = (uint32_t)(Buffer[i + 28] + (((uint16_t)Buffer[i + 29])<<8) + (((uint32_t)Buffer[i + 30])<<16) + (((uint32_t)Buffer[i + 31])<<24));
+        FileEntry.DSize = Size;
+        FirstClusterNum = (uint16_t)(Buffer[i + 26] + (((uint16_t)Buffer[i + 27])<<8));
+        FileEntry.DAttributes = (uint8_t)Buffer[i + 11];
+        std::string FileName;
+        for (int k = 0; k < 11; k++) {
+            if (k == 8 && !(FileEntry.DAttributes & 0x10)) FileName.push_back('.');
+            if (Buffer[i + k] == ' ') continue;
+            FileName.push_back(Buffer[i + k]);
+        }
+        Ntr = (uint8_t)Buffer[i + 12];
+        DIR_FstClusLO = (uint16_t)Buffer[i + 26];
+        strcpy(FileEntry.DShortFileName, FileName.c_str());
+        uint16_t Temp = (uint16_t)(Buffer[i + 14] + (((uint16_t)Buffer[i + 15])<<8));
+        FileEntry.DCreate.DSecond = (Temp & 0x1f) << 1;
+        FileEntry.DCreate.DMinute = (Temp >> 5) & 0x3f;
+        FileEntry.DCreate.DHour   =  Temp >> 11;
+        Temp = (uint16_t)(Buffer[i + 16] + (((uint16_t)Buffer[i + 17])<<8));
+        FileEntry.DCreate.DDay    = Temp & 0x1f;
+        FileEntry.DCreate.DMonth  = (Temp >> 5) & 0x0f;
+        FileEntry.DCreate.DYear   = (Temp >> 9) + 1980;
+        FileEntry.DCreate.DHundredth = Buffer[i + 13];
+        Temp = (uint16_t)(Buffer[i + 18] + (((uint16_t)Buffer[i + 19])<<8));
+        FileEntry.DAccess.DDay    = Temp & 0x1f;
+        FileEntry.DAccess.DMonth  = (Temp >> 5) & 0x0f;
+        FileEntry.DAccess.DYear   = (Temp >> 9) + 1980;
+        Temp = (uint16_t)(Buffer[i + 22] + (((uint16_t)Buffer[i + 23])<<8));
+        FileEntry.DModify.DSecond = (Temp & 0x1f) << 1;
+        FileEntry.DModify.DMinute = (Temp >> 5) & 0x3f;
+        FileEntry.DModify.DHour   = (Temp >> 11) & 0x1f;
+        Temp = (uint16_t)(Buffer[i + 24] + (((uint16_t)Buffer[i + 25])<<8));
+        FileEntry.DModify.DDay    = Temp & 0x1f;
+        FileEntry.DModify.DMonth  = (Temp >> 5) & 0x0f;
+        FileEntry.DModify.DYear   = (Temp >> 9) + 1980;
+    }
+    bool Open(int* FileDesscriptor, int Flags){
+        if( (  (Flags & O_RDWR) || (Flags & O_WRONLY) || (Flags & O_APPEND) || (Flags & O_TRUNC)  ) && FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_READ_ONLY) return false;
+        else if(FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_VOLUME_ID || FileEntry.DAttributes ==VM_FILE_SYSTEM_ATTR_DIRECTORY ) return false;
+        fileinfo FI;
+        FI.TID = RunningThreadID;
+        FI.Flag = Flags;
+        FI.ByteOffest = 0;
+        FI.ClustorOffest = 0;
+        FI.ClustorNum = FirstClusterNum;
+        Accessed = true;
+        if( FileDescriptors.size() > 0){
+            FI.FD = FileDescriptors[0];
+            FileDescriptors.erase(FileDescriptors.begin());
+        }
+        else {
+            FI.FD = GlobalFD;
+            GlobalFD++;
+        }
+        if(Flags & O_APPEND)
+        {
+            FI.ByteOffest = Size % (BPB.BPB_SecPerClus * 512);
+            FI.ClustorOffest = Size / (BPB.BPB_SecPerClus * 512);
+            while (Fat.Entries[FirstClusterNum] < 0xFFF8) {
+                FirstClusterNum = Fat.Entries[FirstClusterNum];
+            }
+            FI.ClustorNum = FirstClusterNum;
+        }
+        FIS.push_back(FI);
+        ThreadList[RunningThreadID].FDS.push_back(FI.FD);
+        *FileDesscriptor = FI.FD;
+        VMDateTime(&FileEntry.DAccess);
+        return true;
+    }
+};
 class Directory{
+public:
+    File DirFile;
+    std::vector<File> files;
+    std::string Path;
+    int FFB;
 
 };
+std::vector<Directory> Directories;
 void debug() {
     std:: cout<< "CurrerntThread: " << RunningThreadID << std::endl;
     for (auto & i : MutexList){
@@ -437,9 +543,15 @@ TVMStatus VMFileOpen(const char *filename, int flags, int mode,
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
-    MachineFileOpen(filename, flags, mode, FileCallback, &ThreadList[RunningThreadID]);
-    Scheduler(VM_THREAD_STATE_WAITING, -1);
-    *filedescriptor = ThreadList[RunningThreadID].FileData;
+    std::string NameStr(filename, filename + strlen(filename));
+    std::transform(NameStr.begin(), NameStr.end(),NameStr.begin(), ::toupper);
+    if(flags & O_CREAT){
+        if(!Directories[DirectoryIndex].files[Directories[DirectoryIndex].files.size()-1].Open(filedescriptor,flags)){
+            MachineResumeSignals(&signal);
+            return VM_STATUS_FAILURE;
+        }
+        Directories[DirectoryIndex].files[Directories[DirectoryIndex].files.size()-1].Open(filedescriptor,flags);
+    }
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
@@ -763,7 +875,32 @@ void Mount(const char *Image) {
         BPB.ClusterCount = (BPB.BPB_TotSec16 - BPB.FirstDataSector) / BPB.BPB_SecPerClus;
     //Reading FAT
     Fat.Read();
-    
+    ReadRoot();
+}
+void ReadRoot(){
+    Directory Root;
+    for ( int i = 0; i < BPB.RootDirectorySectors; i++){
+        ReadSector(BPB.FirstRootSector + i, 0, 512);
+        for(int j = 0; j < 512; j+=32){
+            if(Buffer[j] == 0x00){
+                Root.FFB = 512 * i + j;
+                Directories.push_back(Root);
+                return;
+            }
+            if(Buffer[j] == 0x0E5) {
+                //the directory entry is free
+                continue;
+            }
+            if(Buffer[j + 11] == 0x0f){
+                if(Buffer[j] == 0x01) j+=32;
+                continue;
+            }
+            File file(j,i);
+            if( i == 0 && j == 0 ) Root.DirFile = file;
+            Root.files.push_back(file);
+        }
+    }
+    Directories.push_back(Root);
 }
 }
 
