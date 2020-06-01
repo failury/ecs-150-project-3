@@ -227,9 +227,10 @@ public:
         VMDateTime(&FileEntry.DAccess);
         return true;
     }
-    bool Close (int Index){
-        for ( int i = 0; i < ThreadList[RunningThreadID].FDS.size(); i++){
-            if(  ThreadList[RunningThreadID].FDS[i] == FIS[Index].FD){
+
+    bool Close(int Index) {
+        for (int i = 0; i < ThreadList[RunningThreadID].FDS.size(); i++) {
+            if (ThreadList[RunningThreadID].FDS[i] == FIS[Index].FD) {
                 FIS.erase(FIS.begin() + Index);
                 ThreadList[RunningThreadID].FDS.erase(ThreadList[RunningThreadID].FDS.begin() + i);
                 VMDateTime(&FileEntry.DAccess);
@@ -237,6 +238,149 @@ public:
             }
         }
         return false;
+    }
+
+    void ReadCluster(int ClusterNum, int &Offset, int Length, char *DataPtr) {
+        VMMutexAcquire(FSMutex, VM_TIMEOUT_INFINITE);
+        if (Length < 512) {
+            memcpy(DataPtr, Buffer, Length);
+            ReadSector(ClusterNum * BPB.BPB_SecPerClus + BPB.FirstDataSector, Offset, Length);
+            Offset += Length;
+        } else {
+            int ReadSize = 0;
+            while (Length > 0) {
+                if (Length > 512) {
+                    ReadSize = 512;
+                    Length -= 512;
+                } else {
+                    ReadSize = Length;
+                    Length = 0;
+                }
+                memcpy(DataPtr, Buffer, ReadSize);
+                ReadSector(ClusterNum * BPB.BPB_SecPerClus + BPB.FirstDataSector, Offset, ReadSize);
+                DataPtr += ReadSize;
+                Offset += ReadSize;
+            }
+        }
+        VMMutexRelease(FSMutex);
+    }
+
+    void WriteCluster(int ClusterNum, int &Offset, int Length, char *DataPtr) {
+        VMMutexAcquire(FSMutex, VM_TIMEOUT_INFINITE);
+        if (Length < 512) {
+            memcpy(Buffer, DataPtr, Length);
+            ReadSector(ClusterNum * BPB.BPB_SecPerClus + BPB.FirstDataSector, Offset, Length);
+            Offset += Length;
+        } else {
+            int WriteSize = 0;
+            while (Length > 0) {
+                if (Length > 512) {
+                    WriteSize = 512;
+                    Length -= 512;
+                } else {
+                    WriteSize = Length;
+                    Length = 0;
+                }
+                memcpy(Buffer, DataPtr, WriteSize);
+                ReadSector(ClusterNum * BPB.BPB_SecPerClus + BPB.FirstDataSector, Offset, WriteSize);
+                DataPtr += WriteSize;
+                Offset += WriteSize;
+            }
+        }
+        VMMutexRelease(FSMutex);
+    }
+
+    void Read(int Index, void *Data, int *Length) {
+        if (*Length > (Size - FIS[Index].ClustorOffest * BPB.BPB_SecPerClus * 512 - FIS[Index].ByteOffest))
+            *Length = Size - FIS[Index].ClustorOffest * BPB.BPB_SecPerClus * 512 - FIS[Index].ByteOffest;
+        int NumByte = *Length;
+        int SizeLeft = BPB.BPB_SecPerClus * 512 - FIS[Index].ByteOffest;
+        char *DataPtr = (char *) Data;
+        if (SizeLeft >= NumByte) {
+            ReadCluster(FIS[Index].ClustorNum, FIS[Index].ByteOffest, NumByte, DataPtr);
+        } else {
+            while (NumByte > 0) {
+                NumByte -= SizeLeft;
+                ReadCluster(FIS[Index].ClustorNum, FIS[Index].ByteOffest, NumByte, DataPtr);
+                FIS[Index].ByteOffest = 0;
+                FIS[Index].ClustorOffest += 1;
+                FIS[Index].ClustorNum = Fat.Entries[FIS[Index].ClustorNum];
+                SizeLeft = BPB.BPB_SecPerClus * 512;
+                if (SizeLeft > NumByte) {
+                    ReadCluster(FIS[Index].ClustorNum, FIS[Index].ByteOffest, NumByte, DataPtr);
+                    break;
+                }
+            }
+        }
+    }
+    void Write(int Index, void *Data, int *Length){
+        if(!(FIS[Index].Flag & O_APPEND)){
+            FIS[Index].ByteOffest = 0;
+            FIS[Index].ClustorOffest = 0;
+        }
+        int NumByte = *Length;
+        char *DataPtr = (char *) Data;
+        while ( NumByte > 0) {
+            if( NumByte > BPB.BPB_SecPerClus * 512){
+                NumByte -= 512 * BPB.BPB_SecPerClus;
+                WriteCluster(FIS[Index].ClustorNum, FIS[Index].ByteOffest, 512 * BPB.BPB_SecPerClus, DataPtr);
+                if(Fat.Entries[FIS[Index].ClustorNum] >= 0xfff8){//
+                    int temp = -1;
+                    for (int i = 0; i < (int) Fat.Entries.size(); i++) {
+                        if (Fat.Entries[i] == 0) {
+                            if(FIS[Index].ClustorNum != -1){
+                                Fat.Entries[FIS[Index].ClustorNum] = i;
+                            }
+                            Fat.Entries[i] = 0xFFF8;
+                            temp = i;
+                            break;
+                        }
+                    }
+                    FIS[Index].ClustorNum = temp;
+                } else {
+                    FIS[Index].ClustorNum = Fat.Entries[FIS[Index].ClustorNum];
+                }
+            } else {
+                WriteCluster(FIS[Index].ClustorNum, FIS[Index].ByteOffest, 512 * BPB.BPB_SecPerClus, DataPtr);
+                int NextCluster;
+                int StartCluster = FIS[Index].ClustorNum;
+                while(Fat.Entries[FIS[Index].ClustorNum] < 0xFFF8) {
+                    NextCluster = Fat.Entries[FIS[Index].ClustorNum];
+                    Fat.Entries[FIS[Index].ClustorNum] = 0;
+                    FIS[Index].ClustorNum = NextCluster;
+                }
+                Fat.Entries[FIS[Index].ClustorNum] = 0;
+                Fat.Entries[StartCluster] = 0xFFF8;
+                NumByte = 0;
+            }
+        }
+        Size = *Length;
+        FileEntry.DSize = Size;
+    }
+    bool Seek( int Orign, int Offset, int *DestOffset, int Index){
+        if(Orign > Size) return false;
+        FIS[Index].ClustorOffest = 0;
+        FIS[Index].ClustorNum = FirstClusterNum;
+        while (Orign > BPB.BPB_SecPerClus * 512){
+            Orign -= BPB.BPB_SecPerClus * 512;
+            FIS[Index].ClustorOffest++;
+            FIS[Index].ClustorNum = Fat.Entries[FIS[Index].ClustorNum];
+        }
+        FIS[Index].ByteOffest = Orign;
+        if(Orign + Offset <= Size) *DestOffset = Orign + Offset;
+        else *DestOffset = Size;
+        while (Offset > 0) {
+            if ( BPB.BPB_SecPerClus * 512 - FIS[Index].ByteOffest > Offset){
+                FIS[Index].ByteOffest = Offset;
+                Offset = 0;
+            } else {
+                Offset -= (BPB.BPB_SecPerClus * 512 - FIS[Index].ByteOffest);
+                FIS[Index].ByteOffest = 0;
+                FIS[Index].ClustorOffest++;
+                FIS[Index].ClustorNum = Fat.Entries[FIS[Index].ClustorNum];
+            }
+        }
+        return  true;
     }
 };
 class Directory {
@@ -580,11 +724,15 @@ TVMStatus VMFileClose(int filedescriptor) {
     int index = 0;
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    if( filedescriptor < 3 ){
+    if (filedescriptor < 3) {
         MachineFileClose(filedescriptor, FileCallback, &ThreadList[RunningThreadID]);
         Scheduler(VM_THREAD_STATE_WAITING, -1);
         MachineResumeSignals(&signal);
         return VM_STATUS_SUCCESS;
+    }
+    if (!Directories[DirectoryIndex].files[index].Close(index)) {
+        MachineResumeSignals(&signal);
+        return VM_STATUS_FAILURE;
     }
     Directories[DirectoryIndex].files[index].Close(index);
     MachineResumeSignals(&signal);
@@ -597,32 +745,38 @@ TVMStatus VMFileRead(int filedescriptor, void *data, int *length) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
-    int Byteleft = *length;
-    *length = 0;
-    int ReadSize = 0;
-    char *Dataptr = (char *) data;
-    void *SharePtr = nullptr;
-    while (Byteleft > 0) {
-        if (Byteleft >= 512) {
-            ReadSize = 512;
-            Byteleft -= 512;
-        } else if (Byteleft < 512) {
-            ReadSize = Byteleft;
-            Byteleft = 0;
-        }
-        if (!AllocateMemory(&SharePtr)) {
-            //if no memory available, schedule and wait for there is memory available
-            ThreadList[RunningThreadID].AllocatedSize = ReadSize;
-            MemoryWaitingList.push_back(ThreadList[RunningThreadID]);
+    if (filedescriptor < 3) {
+        int Byteleft = *length;
+        *length = 0;
+        int ReadSize = 0;
+        char *Dataptr = (char *) data;
+        void *SharePtr = nullptr;
+        while (Byteleft > 0) {
+            if (Byteleft >= 512) {
+                ReadSize = 512;
+                Byteleft -= 512;
+            } else if (Byteleft < 512) {
+                ReadSize = Byteleft;
+                Byteleft = 0;
+            }
+            if (!AllocateMemory(&SharePtr)) {
+                //if no memory available, schedule and wait for there is memory available
+                ThreadList[RunningThreadID].AllocatedSize = ReadSize;
+                MemoryWaitingList.push_back(ThreadList[RunningThreadID]);
+                Scheduler(VM_THREAD_STATE_WAITING, -1);
+                AllocateMemory(&SharePtr);
+            }
+            MachineFileRead(filedescriptor, SharePtr, ReadSize, FileCallback, &ThreadList[RunningThreadID]);
             Scheduler(VM_THREAD_STATE_WAITING, -1);
-            AllocateMemory(&SharePtr);
+            std::memcpy(Dataptr, SharePtr, ReadSize);
+            DeallocateMemory(SharePtr);
+            *length += ThreadList[RunningThreadID].FileData;
+            Dataptr += ReadSize;
         }
-        MachineFileRead(filedescriptor, SharePtr, ReadSize, FileCallback, &ThreadList[RunningThreadID]);
-        Scheduler(VM_THREAD_STATE_WAITING, -1);
-        std::memcpy(Dataptr, SharePtr, ReadSize);
-        DeallocateMemory(SharePtr);
-        *length += ThreadList[RunningThreadID].FileData;
-        Dataptr += ReadSize;
+    } else {
+        int index = 0;
+        int FI = 0;
+        Directories[DirectoryIndex].files[index].Read(FI,data, length);
     }
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
