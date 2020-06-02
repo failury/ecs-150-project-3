@@ -14,8 +14,6 @@
 #include <bits/stdc++.h>
 #include <fcntl.h>
 #include <string>
-
-
 extern "C" {
 #define PL() std::cout << "@ line" <<__LINE__
 typedef void (*TVMMainEntry)(int, char *[]);
@@ -104,7 +102,6 @@ struct BPB {
 class FAT {
 public:
     std::vector<uint16_t> Entries;
-
     void Read() {
         for (int i = 0; i < BPB.BPB_FATSz16; i++) {
             ReadSector(BPB.BPB_RsvdSecCnt + i, 0, 512);
@@ -114,23 +111,34 @@ public:
             }
         }
     }
-//    void Write(){
-//        for ( int a = 0;a < BPB.BPB_NumFATs; a++){
-//            for(int i = 0; i < BPB.BPB_FATSz16; i++){
-//                for(int j = 0;j < 256; j++){
-//                    int result = Buffer[i] + ((uint16_t)(Buffer[i + 1]) << 8 );
-//                    Entries.push_back(result);
-//                }
-//            }
-//        }
-//    }
+    void FreeCluster(int Offset){
+        int NextCluster;
+        int Previous = Offset;
+        while(Entries[Offset] < 0xFFF8){
+            NextCluster = Entries[Offset];
+            Entries[Offset] = 0;
+            Offset = NextCluster;
+        }
+        Entries[Offset] = 0;
+        Entries[Previous] = 0xFFF8;
+    }
+    void Write(int Offset){
+        for ( int i = 0; i < BPB.BPB_FATSz16;i++){
+            for(int j = 0; j < 256; j++){
+                uint16_t Content = Entries[i *256 + j];
+                Content = ((Content & 0xff) << 8) + ((Content >> 8) & 0xff);
+                memcpy(Buffer + j *2, &Content, 2);
+            }
+            WriteSector(BPB.BPB_RsvdSecCnt + Offset * BPB.BPB_FATSz16 + i, 0, 512);
+        }
+    }
 };
 FAT Fat;
 class File {
 public:
     bool Changed;
     bool Accessed;
-    int Offest;
+    int DistToBegin;
     uint32_t Size;
     uint16_t FirstClusterNum;
     uint8_t Ntr;
@@ -151,10 +159,9 @@ public:
     SVMDirectoryEntry FileEntry;
 
     File() {};
-
     File(int i, int j) {
         Changed = false;
-        Offest = j * 512 + i;
+        DistToBegin = j * 512 + i;
         Size = (uint32_t) (Buffer[i + 28] + (((uint16_t) Buffer[i + 29]) << 8) + (((uint32_t) Buffer[i + 30]) << 16) +
                            (((uint32_t) Buffer[i + 31]) << 24));
         FileEntry.DSize = Size;
@@ -191,14 +198,37 @@ public:
         FileEntry.DModify.DMonth = (Temp >> 5) & 0x0f;
         FileEntry.DModify.DYear = (Temp >> 9) + 1980;
     }
-
+    File(const char* filename, int offset){
+        Changed = false;
+        Accessed = true;
+        Size = 0;
+        Ntr = 0;
+        DistToBegin = offset;
+        FirstClusterNum = -1;
+        for ( int i = 0; i < Fat.Entries.size(); i++){
+            if( Fat.Entries[i] ==0 ){
+                Fat.Entries[i] = 0xFFF8;
+                FirstClusterNum = i;
+                break;
+            }
+        }
+        strcpy(FileEntry.DShortFileName, filename);
+        FileEntry.DSize = Size;
+        FileEntry.DShortFileName[strlen(filename)] = '\0';
+        VMDateTime(&FileEntry.DCreate);
+        VMDateTime(&FileEntry.DAccess);
+        VMDateTime(&FileEntry.DModify);
+        FileEntry.DAttributes = 0;
+    }
     bool Open(int *FileDesscriptor, int Flags) {
         if (((Flags & O_RDWR) || (Flags & O_WRONLY) || (Flags & O_APPEND) || (Flags & O_TRUNC)) &&
-            FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_READ_ONLY)
+            FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_READ_ONLY) {
             return false;
-        else if (FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_VOLUME_ID ||
-                 FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_DIRECTORY)
+        }
+        else if (FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_DIRECTORY ||
+                 FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_VOLUME_ID){
             return false;
+        }
         fileinfo FI;
         FI.TID = RunningThreadID;
         FI.Flag = Flags;
@@ -220,6 +250,10 @@ public:
                 FirstClusterNum = Fat.Entries[FirstClusterNum];
             }
             FI.ClustorNum = FirstClusterNum;
+        }
+        if(Flags & O_TRUNC){
+            Fat.FreeCluster(FirstClusterNum);
+            Size = 0;
         }
         FIS.push_back(FI);
         ThreadList[RunningThreadID].FDS.push_back(FI.FD);
@@ -380,18 +414,91 @@ public:
                 FIS[Index].ClustorNum = Fat.Entries[FIS[Index].ClustorNum];
             }
         }
-        return  true;
+        return true;
+    }
+    void Save(){
+        int length = strlen(FileEntry.DShortFileName);
+        if( FileEntry.DAttributes & 0x10){
+            for ( int i =0; i < 11; i++){
+                if ( length > i) {
+                    Buffer[i] = FileEntry.DShortFileName[i];
+                } else {
+                    Buffer[i] = ' ';
+                }
+            }
+        }  else {
+            int i = 0;
+            while ( FileEntry.DShortFileName[i] != '.'){
+                Buffer[i] = FileEntry.DShortFileName[i];
+                i++;
+            }
+            for ( int j = i; j < 8; j++) {
+                Buffer[j] = 32;
+            }
+            Buffer[8] = FileEntry.DShortFileName[length - 3];
+            Buffer[9] = FileEntry.DShortFileName[length - 2];
+            Buffer[10] = FileEntry.DShortFileName[length - 1];
+        }
+        Buffer[11] = FileEntry.DAttributes;
+        Buffer[12] = Ntr;
+        Buffer[13] = FileEntry.DCreate.DHundredth;
+        uint16_t temp_buffer = ((FileEntry.DCreate.DSecond >> 1) & 0x1F) | ((FileEntry.DCreate.DMinute & 0x3F ) << 5) | ( (FileEntry.DCreate.DHour & 0x1F) << 11);
+        memcpy(Buffer + 14, &temp_buffer, 2);
+        temp_buffer = ((FileEntry.DCreate.DYear - 1980) << 9) | ((FileEntry.DCreate.DMonth & 0x0f) << 5) | (FileEntry.DCreate.DDay & 0x1f);
+        memcpy(Buffer + 16, &temp_buffer, 2);
+        temp_buffer = ((FileEntry.DAccess.DYear - 1980) << 9) | ((FileEntry.DAccess.DMonth & 0x0f) << 5) | (FileEntry.DAccess.DDay & 0x1f);
+        memcpy(Buffer + 18, &temp_buffer, 2);
+        uint8_t zero = 0x0;
+        memcpy(Buffer + 20, &zero, 1);
+        memcpy(Buffer + 21, &zero, 1);
+        temp_buffer = ((FileEntry.DModify.DSecond >> 1) & 0x1F) | ((FileEntry.DModify.DMinute & 0x3F ) << 5) | ( (FileEntry.DModify.DHour & 0x1F) << 11);
+        memcpy(Buffer + 22, &temp_buffer, 2);
+        temp_buffer = ((FileEntry.DModify.DYear - 1980) << 9) | ((FileEntry.DModify.DMonth & 0x0f) << 5) | (FileEntry.DModify.DDay & 0x1f);
+        memcpy(Buffer + 24, &temp_buffer, 2);
+        temp_buffer = ((FirstClusterNum << 8) | (FirstClusterNum >> 8));
+        memcpy(Buffer + 26, &FirstClusterNum, 2);
+        memcpy(Buffer + 28, &Size, 4);
+
+        WriteSector(BPB.FirstRootSector, DistToBegin, 32);
     }
 };
 class Directory {
 public:
     File DirFile;
     std::vector<File> files;
-    std::string Path;
+    char Path[VM_FILE_SYSTEM_MAX_PATH];
     int FFB;
+    bool isOpen = false;
+    int DirectoryOffset;
+    bool FindFile(int FileDescriptor, int &index, int&FI){
+        for(int i = 0; i < files.size(); i++){
+            for ( int j = 0; j < files[i].FIS.size(); j++){
+                if(files[i].FIS[j].FD == FileDescriptor && files[i].FIS[j].TID != RunningThreadID){
+                    return false;
+                }
+                if(files[i].FIS[j].FD == FileDescriptor && files[i].FIS[j].TID == RunningThreadID){
+                    index = i;
+                    FI = j;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    bool CreateFile( const char * FileName){
+        if(DirectoryIndex == 0) {
+            if ( FFB >= BPB.RootDirectorySectors * 512) return false;
 
+            File f = File(FileName, FFB);
+            FFB += 32;
+            files.push_back(f);
+        }
+        return true;
+    }
 };
 std::vector<Directory> Directories;
+
+
 void debug() {
     std::cout << "CurrerntThread: " << RunningThreadID << std::endl;
     for (auto &i : MutexList) {
@@ -507,6 +614,12 @@ TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, const char *mount, int a
     Mount(mount);
     MachineEnableSignals();
     entry(argc, argv);
+    for ( int i =0; i < BPB.BPB_NumFATs; i++){
+        Fat.Write(i);
+    }
+    for (auto & file : Directories[0].files){
+        if(file.Accessed) file.Save();
+    }
     VMUnloadModule();
     MachineTerminate();
     return VM_STATUS_SUCCESS;
@@ -709,9 +822,19 @@ TVMStatus VMFileOpen(const char *filename, int flags, int mode,
     }
     std::string NameStr(filename, filename + strlen(filename));
     std::transform(NameStr.begin(), NameStr.end(), NameStr.begin(), ::toupper);
+    for(auto & file : Directories[DirectoryIndex].files){
+        auto a = file.FileEntry.DShortFileName;
+        std:: string TempString(a, a + strlen(a));
+        if (TempString == NameStr ){
+            if (!file.Open(filedescriptor,flags)){
+                MachineResumeSignals(&signal);
+                return VM_STATUS_FAILURE;
+            }
+        }
+    }
     if (flags & O_CREAT) {
-        if (!Directories[DirectoryIndex].files[Directories[DirectoryIndex].files.size() - 1].Open(filedescriptor,
-                                                                                                  flags)) {
+
+        if(!Directories[DirectoryIndex].CreateFile(NameStr.c_str())){
             MachineResumeSignals(&signal);
             return VM_STATUS_FAILURE;
         }
@@ -774,8 +897,12 @@ TVMStatus VMFileRead(int filedescriptor, void *data, int *length) {
             Dataptr += ReadSize;
         }
     } else {
-        int index = 0;
-        int FI = 0;
+        int index;
+        int FI;
+        if(!Directories[DirectoryIndex].FindFile(filedescriptor,index,FI)){
+            MachineResumeSignals(&signal);
+            return VM_STATUS_FAILURE;
+        }
         Directories[DirectoryIndex].files[index].Read(FI,data, length);
     }
     MachineResumeSignals(&signal);
@@ -788,48 +915,69 @@ TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
-    int Byteleft = *length;
-    *length = 0;
-    int ReadSize = 0;
-    char *Dataptr = (char *) data;
-    void *SharePtr = nullptr;
-    while (Byteleft > 0) {
-        if (Byteleft >= 512) {
-            ReadSize = 512;
-            Byteleft -= 512;
-        } else if (Byteleft < 512) {
-            ReadSize = Byteleft;
-            Byteleft = 0;
-        }
-        if (!AllocateMemory(&SharePtr)) {
-            //if no memory available, schedule and wait for there is memory available
-            ThreadList[RunningThreadID].AllocatedSize = ReadSize;
-            MemoryWaitingList.push_back(ThreadList[RunningThreadID]);
+    if( filedescriptor < 3) {
+        int Byteleft = *length;
+        *length = 0;
+        int ReadSize = 0;
+        char *Dataptr = (char *) data;
+        void *SharePtr = nullptr;
+        while (Byteleft > 0) {
+            if (Byteleft >= 512) {
+                ReadSize = 512;
+                Byteleft -= 512;
+            } else if (Byteleft < 512) {
+                ReadSize = Byteleft;
+                Byteleft = 0;
+            }
+            if (!AllocateMemory(&SharePtr)) {
+                //if no memory available, schedule and wait for there is memory available
+                ThreadList[RunningThreadID].AllocatedSize = ReadSize;
+                MemoryWaitingList.push_back(ThreadList[RunningThreadID]);
+                Scheduler(VM_THREAD_STATE_WAITING, -1);
+                AllocateMemory(&SharePtr);
+            }
+            std::memcpy(SharePtr, Dataptr, ReadSize);
+            MachineFileWrite(filedescriptor, SharePtr, ReadSize, FileCallback, &ThreadList[RunningThreadID]);
             Scheduler(VM_THREAD_STATE_WAITING, -1);
-            AllocateMemory(&SharePtr);
+            DeallocateMemory(SharePtr);
+            *length += ThreadList[RunningThreadID].FileData;
+            Dataptr += ReadSize;
         }
-        std::memcpy(SharePtr, Dataptr, ReadSize);
-        MachineFileWrite(filedescriptor, SharePtr, ReadSize, FileCallback, &ThreadList[RunningThreadID]);
-        Scheduler(VM_THREAD_STATE_WAITING, -1);
-        DeallocateMemory(SharePtr);
-        *length += ThreadList[RunningThreadID].FileData;
-        Dataptr += ReadSize;
+    } else {
+        int index;
+        int FI;
+        if(!Directories[DirectoryIndex].FindFile(filedescriptor,index,FI)){
+            MachineResumeSignals(&signal);
+            return VM_STATUS_FAILURE;
+        }
+        Directories[DirectoryIndex].files[index].Write(FI,data, length);
     }
-    //std::cout << (char*)SharePtr <<" "<<ReadSize << std::endl;
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMFileSeek(int filedescriptor, int offset, int whence, int *newoffset) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    if (newoffset == NULL) {
+    if(filedescriptor < 3) {
+        if (newoffset == NULL) {
+            MachineResumeSignals(&signal);
+            return VM_STATUS_FAILURE;
+        }
+        *newoffset = offset;
+        MachineFileSeek(filedescriptor, offset, whence, FileCallback, &ThreadList[RunningThreadID]);
+        Scheduler(VM_THREAD_STATE_WAITING, -1);
         MachineResumeSignals(&signal);
-        return VM_STATUS_FAILURE;
+    } else {
+        int index;
+        int FI;
+        if(!Directories[DirectoryIndex].FindFile(filedescriptor,index,FI)){
+            MachineResumeSignals(&signal);
+            return VM_STATUS_FAILURE;
+        }
+        Directories[DirectoryIndex].files[index].Seek(whence, offset, newoffset, FI);
+        MachineResumeSignals(&signal);
     }
-    *newoffset = offset;
-    MachineFileSeek(filedescriptor, offset, whence, FileCallback, &ThreadList[RunningThreadID]);
-    Scheduler(VM_THREAD_STATE_WAITING, -1);
-    MachineResumeSignals(&signal);
+
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMMutexCreate(TVMMutexIDRef mutexref) {
@@ -1081,6 +1229,83 @@ void ReadRoot() {
         }
     }
     Directories.push_back(Root);
+}
+TVMStatus VMDirectoryOpen(const char *dirname, int *dirdescriptor){
+    if( dirname == nullptr || dirdescriptor == nullptr){
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    if(VMFileSystemValidPathName(dirname) == VM_STATUS_ERROR_INVALID_PARAMETER){
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    if(!strcmp(dirname, "/")){
+        return VM_STATUS_FAILURE;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    //only for root for now
+    Directories[0].isOpen = true;
+    Directories[0].DirectoryOffset = 0;
+    *dirdescriptor = 3;
+    strcpy(Directories[0].Path,dirname);
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMDirectoryClose(int dirdescriptor){
+    if(dirdescriptor != 3) {
+        return VM_STATUS_FAILURE;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    Directories[0].isOpen = false;
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMDirectoryRead(int dirdescriptor,
+                          SVMDirectoryEntryRef dirent){
+    if (dirent == nullptr || dirdescriptor != 3) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    if (Directories[0].DirectoryOffset >= Directories[DirectoryIndex].files.size()) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+
+    *dirent = Directories[0].files[Directories[0].DirectoryOffset].FileEntry;
+    Directories[0].DirectoryOffset++;
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMDirectoryRewind(int dirdescriptor){
+    if (dirdescriptor != 50) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    Directories[0].DirectoryOffset = 0;
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMDirectoryCurrent(char *abspath){
+    if (abspath == nullptr) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    strcpy(abspath, "/");
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMDirectoryChange(const char *path){
+    if (path == nullptr) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    char temp[VM_FILE_SYSTEM_MAX_PATH + 1];
+    VMFileSystemGetAbsolutePath(temp, Directories[0].Path, path);
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
 }
 }
 
