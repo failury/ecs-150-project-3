@@ -277,8 +277,8 @@ public:
     void ReadCluster(int ClusterNum, int &Offset, int Length, char *DataPtr) {
         VMMutexAcquire(FSMutex, VM_TIMEOUT_INFINITE);
         if (Length < 512) {
-            memcpy(DataPtr, Buffer, Length);
             ReadSector(ClusterNum * BPB.BPB_SecPerClus + BPB.FirstDataSector, Offset, Length);
+            memcpy(DataPtr, Buffer, Length);
             Offset += Length;
         } else {
             int ReadSize = 0;
@@ -303,8 +303,9 @@ public:
         VMMutexAcquire(FSMutex, VM_TIMEOUT_INFINITE);
         if (Length < 512) {
             memcpy(Buffer, DataPtr, Length);
-            ReadSector(ClusterNum * BPB.BPB_SecPerClus + BPB.FirstDataSector, Offset, Length);
+            WriteSector(ClusterNum * BPB.BPB_SecPerClus + BPB.FirstDataSector, Offset, Length);
             Offset += Length;
+
         } else {
             int WriteSize = 0;
             while (Length > 0) {
@@ -316,7 +317,7 @@ public:
                     Length = 0;
                 }
                 memcpy(Buffer, DataPtr, WriteSize);
-                ReadSector(ClusterNum * BPB.BPB_SecPerClus + BPB.FirstDataSector, Offset, WriteSize);
+                WriteSector(ClusterNum * BPB.BPB_SecPerClus + BPB.FirstDataSector, Offset, WriteSize);
                 DataPtr += WriteSize;
                 Offset += WriteSize;
             }
@@ -607,11 +608,13 @@ TVMStatus VMStart(int tickms, TVMMemorySize sharedsize, const char *mount, int a
         VMThreadCreate(IdleThread, NULL, 0x100000, 0, &id);// creating idel thread
         VMThreadActivate(id);
         ThreadList[0].State = VM_THREAD_STATE_RUNNING;
+        VMMutexCreate(&FSMutex);
+        AllocateMemory((void **) &Buffer);
+        Mount(mount);
     } else {
         MachineTerminate();
         return VM_STATUS_FAILURE;
     }
-    Mount(mount);
     MachineEnableSignals();
     entry(argc, argv);
     for ( int i =0; i < BPB.BPB_NumFATs; i++){
@@ -844,7 +847,8 @@ TVMStatus VMFileOpen(const char *filename, int flags, int mode,
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMFileClose(int filedescriptor) {
-    int index = 0;
+    int index;
+    int FI;
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
     if (filedescriptor < 3) {
@@ -852,19 +856,21 @@ TVMStatus VMFileClose(int filedescriptor) {
         Scheduler(VM_THREAD_STATE_WAITING, -1);
         MachineResumeSignals(&signal);
         return VM_STATUS_SUCCESS;
+    } else {
+        if(!Directories[DirectoryIndex].FindFile(filedescriptor,index,FI)){
+            MachineResumeSignals(&signal);
+            return VM_STATUS_FAILURE;
+        }
+        Directories[DirectoryIndex].files[index].Close(FI);
     }
-    if (!Directories[DirectoryIndex].files[index].Close(index)) {
-        MachineResumeSignals(&signal);
-        return VM_STATUS_FAILURE;
-    }
-    Directories[DirectoryIndex].files[index].Close(index);
-    MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMFileRead(int filedescriptor, void *data, int *length) {
+    int index;
+    int FI;
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    if (length == NULL || data == NULL) {
+    if (length == nullptr || data == nullptr) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
@@ -897,8 +903,7 @@ TVMStatus VMFileRead(int filedescriptor, void *data, int *length) {
             Dataptr += ReadSize;
         }
     } else {
-        int index;
-        int FI;
+
         if(!Directories[DirectoryIndex].FindFile(filedescriptor,index,FI)){
             MachineResumeSignals(&signal);
             return VM_STATUS_FAILURE;
@@ -909,8 +914,11 @@ TVMStatus VMFileRead(int filedescriptor, void *data, int *length) {
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
+    int index;
+    int FI;
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
+
     if (length == nullptr || data == nullptr) {
         MachineResumeSignals(&signal);
         return VM_STATUS_ERROR_INVALID_PARAMETER;
@@ -944,8 +952,6 @@ TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
             Dataptr += ReadSize;
         }
     } else {
-        int index;
-        int FI;
         if(!Directories[DirectoryIndex].FindFile(filedescriptor,index,FI)){
             MachineResumeSignals(&signal);
             return VM_STATUS_FAILURE;
@@ -956,6 +962,8 @@ TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
     return VM_STATUS_SUCCESS;
 }
 TVMStatus VMFileSeek(int filedescriptor, int offset, int whence, int *newoffset) {
+    int index;
+    int FI;
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
     if(filedescriptor < 3) {
@@ -968,8 +976,6 @@ TVMStatus VMFileSeek(int filedescriptor, int offset, int whence, int *newoffset)
         Scheduler(VM_THREAD_STATE_WAITING, -1);
         MachineResumeSignals(&signal);
     } else {
-        int index;
-        int FI;
         if(!Directories[DirectoryIndex].FindFile(filedescriptor,index,FI)){
             MachineResumeSignals(&signal);
             return VM_STATUS_FAILURE;
@@ -1178,12 +1184,10 @@ void WriteSector(int SectorOffset, int BytesOffset, int NumBytes) {
     MachineResumeSignals(&signal);
 }
 void Mount(const char *Image) {
-    VMMutexCreate(&FSMutex);
     MachineFileOpen(Image, O_RDWR, 0, FileCallback, &ThreadList[RunningThreadID]);
     ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
     Scheduler(VM_THREAD_STATE_WAITING, -1);
     FileSystemFD = ThreadList[0].FileData;
-    AllocateMemory((void **) &Buffer);
     //Reading BPB
     ReadSector(0, 0, 512);
     BPB.BPB_SecPerClus = *(uint8_t *) (Buffer + 13);
