@@ -1,10 +1,10 @@
-#include "VirtualMachine.h" 	 	    		
+#include "VirtualMachine.h"
 #include <fcntl.h>
 
 int StringMatch(const char *left, const char *right){
     while(*left && *right){
         if(*left != *right){
-            return 0;    
+            return 0;
         }
         left++;
         right++;
@@ -15,14 +15,14 @@ int StringMatch(const char *left, const char *right){
 int StringMatchN(const char *left, const char *right, int n){
     while(*left && *right && n){
         if(*left != *right){
-            return 0;    
+            return 0;
         }
         left++;
         right++;
         n--;
     }
     if(0 == n){
-        return 1;    
+        return 1;
     }
     return (*left == *right);
 }
@@ -34,7 +34,7 @@ void VMMain(int argc, char *argv[]){
     SVMDirectoryEntry DirectoryEntry;
     int CharactersIn = 0;
     int Mil, Kil, One;
-    
+
     while(1){
         VMDirectoryCurrent(DirectoryName);
         VMPrint("%s> ",DirectoryName);
@@ -51,7 +51,7 @@ void VMMain(int argc, char *argv[]){
             }
             CharactersIn++;
         }
-        
+
         while(0 < CharactersIn){
             CharactersIn--;
             if(' ' != LineBuffer[CharactersIn]){
@@ -64,7 +64,7 @@ void VMMain(int argc, char *argv[]){
             break;
         }
         else if(StringMatch(LineBuffer,"ls")){
-            
+
             if(VM_STATUS_SUCCESS == VMDirectoryOpen(DirectoryName, &DirDescriptor)){
                 VMPrint("   DATE   |  TIME  | TYPE |    SIZE   |    SFN      |  LFN\n");
                 while(VM_STATUS_SUCCESS == VMDirectoryRead(DirDescriptor, &DirectoryEntry)){
@@ -74,7 +74,7 @@ void VMMain(int argc, char *argv[]){
                     Kil = (DirectoryEntry.DSize / 1000) % 1000;
                     One = DirectoryEntry.DSize % 1000;
                     if(Mil){
-                        VMPrint("%3d,%03d,%03d ",Mil, Kil, One);   
+                        VMPrint("%3d,%03d,%03d ",Mil, Kil, One);
                     }
                     else if(Kil){
                         VMPrint("    %3d,%03d ", Kil, One);
@@ -83,14 +83,14 @@ void VMMain(int argc, char *argv[]){
                         VMPrint("        %3d ",One);
                     }
                     else{
-                        VMPrint("            ");   
+                        VMPrint("            ");
                     }
                     VMPrint("%-13s %s\n",DirectoryEntry.DShortFileName, DirectoryEntry.DLongFileName);
                 }
                 VMDirectoryClose(DirDescriptor);
             }
             else{
-                VMPrint("Failed to open directory %s!\n", DirectoryName);   
+                VMPrint("Failed to open directory %s!\n", DirectoryName);
             }
         }
         else if(StringMatchN(LineBuffer,"cd",2)){

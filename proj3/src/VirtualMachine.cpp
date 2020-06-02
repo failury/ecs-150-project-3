@@ -229,21 +229,17 @@ public:
                  FileEntry.DAttributes == VM_FILE_SYSTEM_ATTR_VOLUME_ID){
             return false;
         }
-        fileinfo FI;
+        Accessed = true;
+        fileinfo FI{};
         FI.TID = RunningThreadID;
         FI.Flag = Flags;
         FI.ByteOffest = 0;
         FI.ClustorOffest = 0;
         FI.ClustorNum = FirstClusterNum;
-        Accessed = true;
-        if (FileDescriptors.size() > 0) {
-            FI.FD = FileDescriptors[0];
-            FileDescriptors.erase(FileDescriptors.begin());
-        } else {
-            FI.FD = GlobalFD;
-            GlobalFD++;
-        }
-        if (Flags & O_APPEND) {
+        FI.FD = GlobalFD;
+        GlobalFD++;
+
+        if (Flags & (O_APPEND)) {
             FI.ByteOffest = Size % (BPB.BPB_SecPerClus * 512);
             FI.ClustorOffest = Size / (BPB.BPB_SecPerClus * 512);
             while (Fat.Entries[FirstClusterNum] < 0xFFF8) {
@@ -898,10 +894,12 @@ TVMStatus VMFileRead(int filedescriptor, void *data, int *length) {
             MachineFileRead(filedescriptor, SharePtr, ReadSize, FileCallback, &ThreadList[RunningThreadID]);
             Scheduler(VM_THREAD_STATE_WAITING, -1);
             std::memcpy(Dataptr, SharePtr, ReadSize);
+
             DeallocateMemory(SharePtr);
             *length += ThreadList[RunningThreadID].FileData;
             Dataptr += ReadSize;
         }
+
     } else {
 
         if(!Directories[DirectoryIndex].FindFile(filedescriptor,index,FI)){
@@ -967,7 +965,7 @@ TVMStatus VMFileSeek(int filedescriptor, int offset, int whence, int *newoffset)
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
     if(filedescriptor < 3) {
-        if (newoffset == NULL) {
+        if (newoffset == nullptr) {
             MachineResumeSignals(&signal);
             return VM_STATUS_FAILURE;
         }
@@ -1240,9 +1238,6 @@ TVMStatus VMDirectoryOpen(const char *dirname, int *dirdescriptor){
     }
     if(VMFileSystemValidPathName(dirname) == VM_STATUS_ERROR_INVALID_PARAMETER){
         return VM_STATUS_ERROR_INVALID_PARAMETER;
-    }
-    if(!strcmp(dirname, "/")){
-        return VM_STATUS_FAILURE;
     }
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
